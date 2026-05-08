@@ -1,0 +1,38 @@
+[project]
+name = "decoding-decoding"
+version = "0.1.0"
+description = "Does an LLM's pre-truncation distribution adapt to its own top-k sampling?"
+authors = [
+    { name = "AMindToThink", email = "matthewkhoriaty@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "matplotlib>=3.10.9",
+    "numpy<2.3",
+    "polars>=1.40.1",
+    "pyarrow>=24.0.0",
+    "torch==2.9.1",
+    "tqdm>=4.67.3",
+    "vllm==0.15.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
+# Pin torch to the cu128 wheel: the system driver (575.51.03 / CUDA 12.9) is too
+# old for the default cu130 wheel that uv resolves for torch 2.11.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
