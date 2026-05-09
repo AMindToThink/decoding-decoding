@@ -202,6 +202,82 @@ def fig4_specificity_diagonal(data: dict, out_path: Path, late_start: int = 500)
     print(f"  wrote {out_path}")
 
 
+def fig6_rank_probability(data: dict, out_path: Path, late_start: int = 500) -> None:
+    """For each condition, plot mean p_r at late positions as a function of rank r.
+
+    Two panels:
+        Left  — linear y, ranks 1..20: shows where the cliff sits.
+        Right — log y, ranks 1..200: shows the full tail shape.
+
+    CI bands via cluster bootstrap by prompt over per-(prompt, run) late means.
+    """
+    n_top_n = data["inf"].top_logprobs.shape[-1]
+    ranks_left = np.arange(1, 21)
+    ranks_right = np.arange(1, n_top_n + 1)
+
+    fig, (ax_lin, ax_log) = plt.subplots(1, 2, figsize=(12, 4.4))
+    color_map = {"1": "C0", "3": "C2", "5": "C3", "inf": "C1"}
+
+    for condition_k in CONDITIONS:
+        cd = data[condition_k]
+        # Probabilities at every rank, late-position-mean per (prompt, run).
+        # Shape: (n_prompts, n_runs, top_n)
+        late_probs = np.exp(cd.top_logprobs[..., late_start:, :]).mean(axis=-2)
+
+        # Bootstrap-mean per rank: feed (n_prompts, n_runs, n_ranks) into
+        # bootstrap_position_mean which treats the last axis as positions.
+        point, lo, hi = bootstrap_position_mean(late_probs, n_resamples=2000)
+        color = color_map[condition_k]
+
+        ax_lin.plot(
+            ranks_left,
+            point[: len(ranks_left)],
+            color=color,
+            label=f"top-k = {condition_k}",
+            lw=1.5,
+        )
+        ax_lin.fill_between(
+            ranks_left,
+            lo[: len(ranks_left)],
+            hi[: len(ranks_left)],
+            color=color,
+            alpha=0.2,
+        )
+
+        # Log-y panel uses every rank we saved.
+        ax_log.plot(ranks_right, point, color=color, label=f"top-k = {condition_k}", lw=1.4)
+        ax_log.fill_between(ranks_right, lo, hi, color=color, alpha=0.18)
+
+        # Vertical guide lines at each treatment K.
+        if condition_k != "inf":
+            ax_lin.axvline(int(condition_k), color=color, ls=":", alpha=0.5, lw=1.0)
+            ax_log.axvline(int(condition_k), color=color, ls=":", alpha=0.5, lw=1.0)
+
+    ax_lin.set_xlabel("rank r")
+    ax_lin.set_ylabel(f"E[p_r] over positions ≥ {late_start}")
+    ax_lin.set_title("Linear y, ranks 1..20")
+    ax_lin.legend(loc="best", fontsize=9)
+    ax_lin.grid(alpha=0.3)
+    ax_lin.set_xticks([1, 3, 5, 10, 15, 20])
+
+    ax_log.set_xlabel("rank r (log)")
+    ax_log.set_ylabel("E[p_r] (log)")
+    ax_log.set_xscale("log")
+    ax_log.set_yscale("log")
+    ax_log.set_title(f"Log–log, full top-{n_top_n}")
+    ax_log.legend(loc="best", fontsize=9)
+    ax_log.grid(alpha=0.3, which="both")
+
+    fig.suptitle(
+        "Fig 6. Probability assigned to rank r at late positions, by condition",
+        y=1.02,
+    )
+    fig.tight_layout()
+    fig.savefig(out_path, bbox_inches="tight", dpi=150)
+    plt.close(fig)
+    print(f"  wrote {out_path}")
+
+
 def fig5_forest(data: dict, out_path: Path, late_start: int = 500) -> None:
     """Forest plot of (treatment − control) cliff at r = K, averaged over late positions."""
     treatment_ks = ("1", "3", "5")
@@ -271,13 +347,25 @@ def main() -> None:
         type=Path,
         default=Path(__file__).resolve().parent.parent / "results" / "figures",
     )
+    parser.add_argument(
+        "--late-start",
+        type=int,
+        default=500,
+        help="positions >= this are treated as 'late' for late-position-mean figures",
+    )
+    parser.add_argument(
+        "--max-length",
+        type=int,
+        default=None,
+        help="optional truncation of the position axis (e.g. to compare at fixed L)",
+    )
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     print("Loading saved data per condition…")
     data: dict = {}
     for k in CONDITIONS:
-        cd = load_condition(args.data_dir, k)
+        cd = load_condition(args.data_dir, k, max_length=args.max_length)
         print(f"  condition {k}: top_logprobs.shape = {cd.top_logprobs.shape}")
         data[k] = cd
 
@@ -285,8 +373,13 @@ def main() -> None:
     fig1_main_effect(data, args.out_dir / "fig1_main_effect.png")
     fig2_cliff_heatmap(data, args.out_dir / "fig2_cliff_heatmap.png")
     fig3_concentration(data, args.out_dir / "fig3_concentration.png")
-    fig4_specificity_diagonal(data, args.out_dir / "fig4_specificity.png")
-    fig5_forest(data, args.out_dir / "fig5_forest.png")
+    fig4_specificity_diagonal(
+        data, args.out_dir / "fig4_specificity.png", late_start=args.late_start
+    )
+    fig5_forest(data, args.out_dir / "fig5_forest.png", late_start=args.late_start)
+    fig6_rank_probability(
+        data, args.out_dir / "fig6_rank_probability.png", late_start=args.late_start
+    )
     print(f"All figures written to {args.out_dir}")
 
 

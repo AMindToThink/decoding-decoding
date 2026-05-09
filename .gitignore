@@ -9,9 +9,15 @@ __pycache__/
 # Generated experiment artifacts (regeneratable from scripts)
 data/logprobs/
 data/run_metadata.parquet
+data/run_metadata.legacy.parquet
+data/manifest.parquet
+data/traces/
 data/config.json
-results/figures/
-results/summary.md
+data/logs/
+results/
+
+# Editor-local Claude config / scratch
+.claude/
 
 # Editor / OS
 .vscode/

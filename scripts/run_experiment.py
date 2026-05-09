@@ -29,10 +29,13 @@ def main() -> None:
     # Pin to GPU 0 BEFORE importing anything that touches CUDA.
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-    from decoding_decoding.generate import run_experiment
+    from decoding_decoding.generate import run_topk_experiment
+    from decoding_decoding.logging_utils import start_logging
+
+    start_logging(args.out_dir / "logs", f"topk_L{args.max_tokens}")
 
     t0 = time.time()
-    run_experiment(args.out_dir, max_tokens=args.max_tokens)
+    run_topk_experiment(args.out_dir, max_tokens=args.max_tokens)
     elapsed = time.time() - t0
     print(f"Total wall clock: {elapsed:.1f} s ({elapsed / 60:.1f} min)")
 
