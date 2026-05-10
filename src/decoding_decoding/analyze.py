@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
+from scipy.ndimage import uniform_filter1d
 
 from decoding_decoding.bootstrap import cluster_bootstrap_per_position
 from decoding_decoding.data_layout import MANIFEST_FILENAME, load_trace
@@ -149,13 +150,9 @@ def bootstrap_position_mean(
 
 
 def smooth_rolling_mean(arr: np.ndarray, window: int) -> np.ndarray:
-    """Centered rolling mean along the last axis. Edge handling: same-array mode."""
+    """Centered rolling mean along the last axis. Boundary mode 'nearest'
+    extends the edge value, so a constant input stays constant end-to-end
+    (avoids the zero-padding dilution that np.convolve(mode='same') causes)."""
     if window <= 1:
         return arr
-    kernel = np.ones(window, dtype=np.float64) / window
-    out = np.empty_like(arr, dtype=np.float64)
-    flat = arr.reshape(-1, arr.shape[-1])
-    for i in range(flat.shape[0]):
-        out_flat = np.convolve(flat[i], kernel, mode="same")
-        out.reshape(-1, arr.shape[-1])[i] = out_flat
-    return out
+    return uniform_filter1d(arr.astype(np.float64), size=window, axis=-1, mode="nearest")

@@ -61,5 +61,16 @@ def test_smooth_rolling_mean_window_one_is_identity() -> None:
 
 
 def test_smooth_rolling_mean_constant_is_constant() -> None:
+    """Constant input must produce constant output at EVERY position, including
+    the boundaries. Earlier np.convolve(mode='same') zero-padding violated this
+    and produced fake drops at the array edges in plotted figures."""
     arr = np.full((2, 16), 3.5)
-    np.testing.assert_allclose(smooth_rolling_mean(arr, 5)[:, 5:-5], 3.5)
+    np.testing.assert_allclose(smooth_rolling_mean(arr, 5), 3.5)
+
+
+def test_smooth_rolling_mean_preserves_constant_at_boundary_large_window() -> None:
+    """Regression guard for the boundary-dilution bug: with window 20 on
+    constant 8.0, every output position (including the last) must equal 8.0."""
+    arr = np.full((1, 2048), 8.0)
+    out = smooth_rolling_mean(arr, 20)
+    np.testing.assert_allclose(out, 8.0)
