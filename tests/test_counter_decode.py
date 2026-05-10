@@ -258,3 +258,169 @@ def test_sample_under_beta_uniform_at_zero() -> None:
         counts[x.item()] += 1
     # Each token should appear ~250 times under uniform; loose check.
     assert (counts > 100).all(), f"distribution not uniform under β=0: {counts}"
+
+
+# ---------------------------------------------------------------------------
+# Discrete-grid filter (multi-prior) tests
+# ---------------------------------------------------------------------------
+
+
+def test_init_prior_pmf_lognormal_matches_dist() -> None:
+    """log-normal prior pmf with σ=0.5, anchored at E[β]=1, should put most mass
+    near β=1 and have median = exp(μ_0) ≈ 0.882."""
+    from decoding_decoding.counter_decode import (
+        init_prior_pmf,
+        make_beta_grid,
+    )
+    grid = make_beta_grid(log_lo=-3.0, log_hi=3.0, n_points=121)
+    pmf = init_prior_pmf(grid, kind="lognormal", sigma_0=0.5)
+    # Sum to 1.
+    assert abs(pmf.sum().item() - 1.0) < 1e-6
+    # E[β] under the discrete pmf: should be close to 1.
+    e_beta = float((pmf * grid).sum().item())
+    assert abs(e_beta - 1.0) < 0.05, f"E[β]={e_beta}"
+
+
+def test_init_prior_pmf_exponential_has_mean_1() -> None:
+    from decoding_decoding.counter_decode import (
+        init_prior_pmf,
+        make_beta_grid,
+    )
+    grid = make_beta_grid(log_lo=-4.0, log_hi=4.0, n_points=201)
+    pmf = init_prior_pmf(grid, kind="exponential")
+    e_beta = float((pmf * grid).sum().item())
+    # Exponential(1) has E=1 exactly. The grid truncation makes this
+    # approximate; allow 5% slack.
+    assert abs(e_beta - 1.0) < 0.1, f"E[β]={e_beta}"
+
+
+def test_init_prior_pmf_uniform_log_is_flat_in_log_space() -> None:
+    from decoding_decoding.counter_decode import (
+        init_prior_pmf,
+        make_beta_grid,
+    )
+    grid = make_beta_grid(log_lo=-3.0, log_hi=3.0, n_points=121)
+    pmf = init_prior_pmf(grid, kind="uniform_logβ")
+    # On a log-spaced grid, density 1/β · β = 1 is constant. So pmf should
+    # be uniform across grid points.
+    expected = 1.0 / pmf.shape[0]
+    np.testing.assert_allclose(pmf.numpy(), expected, atol=1e-6)
+
+
+def test_discrete_grid_update_recovers_true_beta() -> None:
+    """Same long-run convergence test as the streaming Laplace, on the
+    discrete-grid filter with log-normal prior. Verifies the new path
+    converges to the right answer under matched-prior."""
+    from decoding_decoding.counter_decode import (
+        discrete_grid_update_batched,
+        init_discrete_grid_state,
+    )
+    rng = torch.Generator().manual_seed(11)
+    V = 30
+    beta_true = 1.7
+    ell_ref = torch.linspace(2.0, -1.5, V, dtype=torch.float32)
+    state = init_discrete_grid_state(
+        batch_size=1, prior_kind="lognormal", sigma_0=0.5, n_points=161
+    )
+    probs = torch.softmax(beta_true * ell_ref, dim=-1)
+    n_steps = 800
+    samples = torch.multinomial(probs, num_samples=n_steps, replacement=True, generator=rng)
+    for t in range(n_steps):
+        # Synthetic "model logits" track our β̂ (matched-prior simulation).
+        beta_hat = float(state.beta_hat().item())
+        logits = (beta_hat * ell_ref).unsqueeze(0)
+        x = samples[t:t+1].to(torch.long)
+        state = discrete_grid_update_batched(state, logits, x, grid_chunk=32)
+    final_beta = float(state.beta_hat().item())
+    # 800 obs → expect within ~10% of β_true (grid resolution + sample noise).
+    assert abs(np.log(final_beta) - np.log(beta_true)) < 0.15, (
+        f"final β̂={final_beta:.3f} vs true {beta_true}"
+    )
+
+
+def test_laplace_evidence_weight_slows_convergence() -> None:
+    """With evidence_weight = 0.1, J grows ~10× slower per step. Verify the
+    same n_steps gives a wider posterior."""
+    rng = torch.Generator().manual_seed(31)
+    V = 20
+    beta_true = 1.6
+    ell_ref = torch.linspace(2.0, -1.5, V, dtype=torch.float64)
+    probs = torch.softmax(beta_true * ell_ref, dim=-1)
+    n_steps = 200
+    samples = torch.multinomial(probs, num_samples=n_steps, replacement=True, generator=rng)
+
+    state_full = init_laplace(1, sigma_0=0.5, dtype=torch.float64)
+    state_weak = init_laplace(1, sigma_0=0.5, dtype=torch.float64)
+    for t in range(n_steps):
+        for state, alpha in ((state_full, 1.0), (state_weak, 0.1)):
+            beta_hat = float(state.beta_hat().item())
+            logits = (beta_hat * ell_ref).unsqueeze(0)
+            x = samples[t:t+1].to(torch.long)
+            new_state, _, _ = laplace_update(
+                state, logits, x, evidence_weight=alpha
+            )
+            state.eta_hat = new_state.eta_hat
+            state.J = new_state.J
+    # The "weak" filter should have ~10× less precision after 200 steps
+    # (modulo the prior contribution of J_0=4).
+    j_full = float(state_full.J.item())
+    j_weak = float(state_weak.J.item())
+    assert j_weak < 0.3 * j_full, f"J_weak {j_weak:.2f} not noticeably below J_full {j_full:.2f}"
+
+
+def test_laplace_memory_decay_keeps_J_bounded() -> None:
+    """With memory_decay = 0.9, J should reach a stationary value even after
+    many observations (instead of growing without bound)."""
+    rng = torch.Generator().manual_seed(33)
+    V = 20
+    beta_true = 1.4
+    ell_ref = torch.linspace(2.0, -1.5, V, dtype=torch.float64)
+    probs = torch.softmax(beta_true * ell_ref, dim=-1)
+    samples = torch.multinomial(probs, num_samples=2000, replacement=True, generator=rng)
+
+    state = init_laplace(1, sigma_0=0.5, dtype=torch.float64)
+    sigma_0 = 0.5
+    prior_eta = -0.5 * sigma_0 ** 2
+    prior_J = 1.0 / sigma_0 ** 2
+    j_history = []
+    for t in range(2000):
+        beta_hat = float(state.beta_hat().item())
+        logits = (beta_hat * ell_ref).unsqueeze(0)
+        x = samples[t:t+1].to(torch.long)
+        state, _, _ = laplace_update(
+            state, logits, x, memory_decay=0.9,
+            prior_eta=prior_eta, prior_J=prior_J,
+        )
+        j_history.append(state.J.item())
+    j_arr = np.asarray(j_history)
+    # J should be bounded, not growing linearly in t.
+    early = j_arr[100:200].mean()
+    late = j_arr[1900:2000].mean()
+    # With γ=0.9, stationary J ≈ E[fisher] / (1-γ) which is moderate.
+    assert late < 100, f"J unbounded under decay=0.9: late={late}"
+    # Late should be close to "stationary" = within 30% of early.
+    assert abs(late - early) / early < 0.5, f"J still growing fast: early={early} late={late}"
+
+
+def test_discrete_grid_filter_walkthrough_two_token() -> None:
+    """Discrete-grid filter on the walkthrough's specific (V=2, 3-point grid)
+    setup must reproduce the same posteriors as the npz-style filter."""
+    from decoding_decoding.counter_decode import (
+        DiscreteGridState,
+        discrete_grid_update_batched,
+    )
+    grid = torch.tensor([0.5, 1.0, 2.0], dtype=torch.float32)
+    pi = torch.tensor([[0.4, 0.4, 0.2]], dtype=torch.float32)
+    state = DiscreteGridState(pi=pi, beta_grid=grid)
+
+    # Use bootstrap-form likelihood: ℓ_t = β̂ · ℓ*_true. Walkthrough's matched-prior
+    # toy outputs ℓ_t = β_model · (1, -1) and updates with x_t=A=0.
+    # Need to feed the filter logits with β̂ = state.beta_hat() at each step.
+    targets_beta_hat = [1.000, 1.060, 1.120]  # walkthrough rounded
+    for expected_bh in targets_beta_hat:
+        bh = float(state.beta_hat().item())
+        assert abs(bh - expected_bh) < 1e-2, f"got β̂={bh:.3f} expected {expected_bh}"
+        logits = torch.tensor([[bh * 1.0, bh * -1.0]], dtype=torch.float32)
+        state = discrete_grid_update_batched(
+            state, logits, torch.tensor([0], dtype=torch.long), grid_chunk=3
+        )

@@ -56,7 +56,10 @@ import torch
 import torch.nn.functional as F
 
 from decoding_decoding.counter_decode import (
+    DiscreteGridState,
     LaplaceState,
+    discrete_grid_update_batched,
+    init_discrete_grid_state,
     init_laplace,
     laplace_update,
     sample_under_beta,
@@ -230,6 +233,10 @@ def _generate_batch(
     sparse_positions: tuple[int, ...] | None,
     save_sparse_for_mask: torch.Tensor,   # (B,) bool — True where we save sparse logits
     device: str,
+    prior_kind: str = "lognormal_laplace",
+    prior_kwargs: dict | None = None,
+    evidence_weight: float = 1.0,
+    memory_decay: float = 1.0,
 ) -> GenerationResult:
     """Run `len(prompts)` trajectories in parallel through `max_tokens` steps.
 
@@ -259,17 +266,47 @@ def _generate_batch(
     P = input_ids.shape[1]
     V = model.config.vocab_size
 
-    # Initialize Laplace state per-trajectory. sigma_0 may differ per trajectory
-    # but typically all the same — we just init once with an arbitrary sigma_0
-    # then overwrite.
-    eta_hat = torch.empty(B, device=device, dtype=torch.float32)
-    J = torch.empty(B, device=device, dtype=torch.float32)
-    for b in range(B):
-        s = init_laplace(1, sigma_0=float(sigma_0_per_traj[b].item()),
-                         device=device, dtype=torch.float32)
-        eta_hat[b] = s.eta_hat[0]
-        J[b] = s.J[0]
-    state = LaplaceState(eta_hat=eta_hat, J=J)
+    # Initialize per-trajectory β estimator state. Two backends:
+    #   - "lognormal_laplace": original streaming Laplace on log β (vectorized).
+    #   - other priors via discrete grid: "lognormal", "exponential", "gamma",
+    #     "invgamma", "halfcauchy_logβ", "cauchy_logβ", "uniform_logβ".
+    # Within one batch we require all trajectories share the same prior_kind
+    # (the design choice is per-condition, not per-trajectory).
+    laplace_state: LaplaceState | None = None
+    grid_state: DiscreteGridState | None = None
+    laplace_prior_eta: float = 0.0
+    laplace_prior_J: float = 0.0
+    grid_prior_pmf: torch.Tensor | None = None
+    pkw = dict(prior_kwargs or {})
+    if prior_kind == "lognormal_laplace":
+        eta_hat = torch.empty(B, device=device, dtype=torch.float32)
+        J = torch.empty(B, device=device, dtype=torch.float32)
+        for b in range(B):
+            s = init_laplace(1, sigma_0=float(sigma_0_per_traj[b].item()),
+                             device=device, dtype=torch.float32)
+            eta_hat[b] = s.eta_hat[0]
+            J[b] = s.J[0]
+        laplace_state = LaplaceState(eta_hat=eta_hat, J=J)
+        # Anchor for memory_decay.
+        sigma_0_val = float(sigma_0_per_traj[0].item())
+        laplace_prior_eta = -0.5 * sigma_0_val ** 2
+        laplace_prior_J = 1.0 / sigma_0_val ** 2
+    else:
+        sigma_0_val = float(sigma_0_per_traj[0].item())
+        if not (sigma_0_per_traj == sigma_0_per_traj[0]).all():
+            raise ValueError(
+                "discrete-grid filter currently shares prior across the batch; "
+                "all sigma_0_per_traj must be identical"
+            )
+        grid_state = init_discrete_grid_state(
+            batch_size=B,
+            prior_kind=prior_kind,
+            sigma_0=sigma_0_val,
+            device=device,
+            dtype=torch.float32,
+            **pkw,
+        )
+        grid_prior_pmf = grid_state.pi[0].clone()  # (G,) — anchor for decay
 
     # Prefill
     with torch.no_grad():
@@ -310,7 +347,15 @@ def _generate_batch(
     gen = torch.Generator(device=device).manual_seed(combined_seed % (2 ** 31 - 1))
 
     for t in range(T):
-        beta_hat_now = state.beta_hat()  # (B,)
+        if laplace_state is not None:
+            beta_hat_now = laplace_state.beta_hat()
+            J_now = laplace_state.J
+        else:
+            assert grid_state is not None
+            beta_hat_now = grid_state.beta_hat()
+            # No "J" in the discrete filter; record posterior precision on log β as 1/std².
+            std_lb = grid_state.posterior_std_log_beta()
+            J_now = 1.0 / std_lb.clamp_min(1e-3) ** 2
 
         # β_dec_t = β_target/β̂_t for corrected arm; β_target for uncorrected.
         beta_dec_t = torch.where(
@@ -330,16 +375,43 @@ def _generate_batch(
         # Sample under β_dec.
         x_t = sample_under_beta(logits_t, beta_dec_t, generator=gen)  # (B,)
 
-        # Streaming Laplace update (vectorized).
-        new_state, score_t, fisher_t = laplace_update(state, logits_t, x_t)
+        # Streaming filter update (Laplace OR discrete-grid), with optional
+        # evidence_weight (α) and memory_decay (γ).
+        if laplace_state is not None:
+            laplace_state, score_t, fisher_t = laplace_update(
+                laplace_state,
+                logits_t,
+                x_t,
+                evidence_weight=evidence_weight,
+                memory_decay=memory_decay,
+                prior_eta=laplace_prior_eta,
+                prior_J=laplace_prior_J,
+            )
+        else:
+            assert grid_state is not None
+            grid_state = discrete_grid_update_batched(
+                grid_state,
+                logits_t,
+                x_t,
+                evidence_weight=evidence_weight,
+                memory_decay=memory_decay,
+                prior_pmf=grid_prior_pmf,
+            )
+            # Diagnostic score / fisher are not strictly defined here. Use placeholders
+            # that still convey something: log-difference in β̂ (score-like) and
+            # change in posterior precision (fisher-like).
+            new_bh = grid_state.beta_hat()
+            score_t = torch.log(new_bh) - torch.log(beta_hat_now)
+            new_J = 1.0 / grid_state.posterior_std_log_beta().clamp_min(1e-3) ** 2
+            fisher_t = (new_J - J_now).clamp_min(0.0)
 
-        # Save per-step diagnostics BEFORE the state moves on.
+        # Save per-step diagnostics.
         sampled[:, t] = x_t
         top_ids[:, t, :] = ti
         top_lps[:, t, :] = tl
         beta_hat_pre_arr[:, t] = beta_hat_now.detach().cpu().numpy()
         beta_dec_arr[:, t] = beta_dec_t.detach().cpu().numpy()
-        J_pre_arr[:, t] = state.J.detach().cpu().numpy()
+        J_pre_arr[:, t] = J_now.detach().cpu().numpy()
         score_arr[:, t] = score_t.detach().cpu().numpy()
         fisher_arr[:, t] = fisher_t.detach().cpu().numpy()
         max_p_phi_arr[:, t] = max_p_phi_t.detach().cpu().numpy()
@@ -349,9 +421,6 @@ def _generate_batch(
 
         if t in sp_positions:
             sparse_buf[t] = logits_t.detach().to(torch.float16).cpu()
-
-        # Advance Laplace state, then advance KV-cached generation.
-        state = new_state
 
         if t < T - 1:
             # Decode-step forward pass with KV cache.
@@ -387,6 +456,22 @@ def _generate_batch(
         stacked = torch.stack([sparse_buf[int(p)] for p in sparse_pos_arr], dim=1)  # (B, P, V)
         sparse_logits_arr = stacked.numpy().astype(np.float16)
 
+    if laplace_state is not None:
+        eta_final = laplace_state.eta_hat.detach().cpu().numpy().astype(np.float32)
+        J_final = laplace_state.J.detach().cpu().numpy().astype(np.float32)
+    else:
+        assert grid_state is not None
+        # For the discrete filter, η̂_final is log(posterior mean), and J_final
+        # is the inverse posterior variance on log β.
+        eta_final = torch.log(grid_state.beta_hat()).detach().cpu().numpy().astype(np.float32)
+        J_final = (
+            (1.0 / grid_state.posterior_std_log_beta().clamp_min(1e-3) ** 2)
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.float32)
+        )
+
     return GenerationResult(
         sampled_token_ids=sampled.cpu().numpy().astype(np.int64),
         top_token_ids=top_ids,
@@ -400,8 +485,8 @@ def _generate_batch(
         entropy_phi=entropy_phi_arr,
         max_p_sample=max_p_sample_arr,
         entropy_sample=entropy_sample_arr,
-        eta_hat_post_final=state.eta_hat.detach().cpu().numpy().astype(np.float32),
-        J_post_final=state.J.detach().cpu().numpy().astype(np.float32),
+        eta_hat_post_final=eta_final,
+        J_post_final=J_final,
         decoded_text=decoded_text,
         sparse_positions=sparse_pos_arr,
         sparse_logits=sparse_logits_arr,
@@ -490,6 +575,10 @@ def run_counter_decode_experiment(
     top_n: int = TOP_LOGPROBS,
     device: str = "cuda",
     dtype: torch.dtype = torch.float16,
+    prior_kind: str = "lognormal_laplace",
+    prior_kwargs: dict | None = None,
+    evidence_weight: float = 1.0,
+    memory_decay: float = 1.0,
 ) -> None:
     """Generate counter-decoding trajectories for the F0 sweep.
 
@@ -570,6 +659,10 @@ def run_counter_decode_experiment(
             sparse_positions=sparse_positions if not corr else None,
             save_sparse_for_mask=save_sparse_mask,
             device=device,
+            prior_kind=prior_kind,
+            prior_kwargs=prior_kwargs,
+            evidence_weight=evidence_weight,
+            memory_decay=memory_decay,
         )
 
         for b, spec in enumerate(batch_specs):
@@ -589,6 +682,9 @@ def run_counter_decode_experiment(
                 "beta_target": float(spec.beta_target),
                 "corrected": bool(spec.corrected),
                 "sigma_0": float(spec.sigma_0),
+                "prior_kind": str(prior_kind),
+                "evidence_weight": float(evidence_weight),
+                "memory_decay": float(memory_decay),
             }
             new_rows.append(
                 {
@@ -624,5 +720,9 @@ def run_counter_decode_experiment(
         top_n=int(top_n),
         n_prompts=len(PROMPTS),
         prompts_sha256=hashlib.sha256("\n".join(PROMPTS).encode()).hexdigest(),
+        prior_kind=str(prior_kind),
+        prior_kwargs=prior_kwargs or {},
+        evidence_weight=float(evidence_weight),
+        memory_decay=float(memory_decay),
     )
     print(f"[counter-decode] wrote {len(new_rows)} trajectories to {out_dir}")

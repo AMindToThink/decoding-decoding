@@ -18,6 +18,9 @@ data/logs/
 data/counter_decode/
 data/counter_decode_sigma_sweep/
 data/counter_decode_extreme/
+data/counter_decode_tight_prior/
+data/counter_decode_priors/
+data/counter_decode_fuzzy/
 results/
 
 # Editor-local Claude config / scratch
