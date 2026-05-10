@@ -12,8 +12,10 @@ data/run_metadata.parquet
 data/run_metadata.legacy.parquet
 data/manifest.parquet
 data/traces/
+data/sparse_logits/
 data/config.json
 data/logs/
+data/counter_decode/
 results/
 
 # Editor-local Claude config / scratch
