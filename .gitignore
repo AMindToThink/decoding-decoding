@@ -23,6 +23,7 @@ data/counter_decode_priors/
 data/counter_decode_fuzzy/
 data/counter_decode_tight_prior/
 data/counter_decode_entropy_stability/
+data/counter_decode_shape/
 results/
 
 # Editor-local Claude config / scratch

@@ -59,11 +59,19 @@ from decoding_decoding.counter_decode import (
     DiscreteGridState,
     LaplaceState,
     discrete_grid_update_batched,
+    estimate_beta_rank_gap,
+    estimate_beta_renyi_infty,
     init_discrete_grid_state,
     init_laplace,
     laplace_update,
+    rank_gaps,
+    renyi_infty_from_logits,
     sample_under_beta,
+    topk_logits_sorted,
 )
+
+
+SHAPE_ESTIMATORS = ("rank_gap", "renyi_infty")
 from decoding_decoding.data_layout import (
     MANIFEST_FILENAME,
     encode_params,
@@ -266,10 +274,13 @@ def _generate_batch(
     P = input_ids.shape[1]
     V = model.config.vocab_size
 
-    # Initialize per-trajectory β estimator state. Two backends:
+    # Initialize per-trajectory β estimator state. Three backends:
     #   - "lognormal_laplace": original streaming Laplace on log β (vectorized).
     #   - other priors via discrete grid: "lognormal", "exponential", "gamma",
     #     "invgamma", "halfcauchy_logβ", "cauchy_logβ", "uniform_logβ".
+    #   - shape estimators "rank_gap" / "renyi_infty": non-bootstrap, read β̂
+    #     from ℓ_t shape relative to a t=0 reference. No filter state, just a
+    #     stored reference per trajectory.
     # Within one batch we require all trajectories share the same prior_kind
     # (the design choice is per-condition, not per-trajectory).
     laplace_state: LaplaceState | None = None
@@ -277,8 +288,15 @@ def _generate_batch(
     laplace_prior_eta: float = 0.0
     laplace_prior_J: float = 0.0
     grid_prior_pmf: torch.Tensor | None = None
+    # Shape-estimator references (captured at t=0).
+    rank_gap_K: int = 20
+    rank_gap_reference: torch.Tensor | None = None     # (B, K)
+    renyi_reference: torch.Tensor | None = None        # (B,)
     pkw = dict(prior_kwargs or {})
-    if prior_kind == "lognormal_laplace":
+    if prior_kind in SHAPE_ESTIMATORS:
+        # No streaming state; references will be captured at t=0 below.
+        pass
+    elif prior_kind == "lognormal_laplace":
         eta_hat = torch.empty(B, device=device, dtype=torch.float32)
         J = torch.empty(B, device=device, dtype=torch.float32)
         for b in range(B):
@@ -318,6 +336,38 @@ def _generate_batch(
     logits_t: torch.Tensor = out.logits[:, -1, :].float()  # (B, V)
     past = out.past_key_values
 
+    # For shape estimators, compute the natural-temperature reference from
+    # the LAST few real prompt positions. Each is at β_model = 1 (prompt is
+    # given text, not model output), and the last-K window captures the
+    # model's logit shape RIGHT BEFORE generation starts — which is the
+    # state we actually want β̂ to be calibrated against. Averaging over
+    # ALL prompt positions conflates with diffuse early-prompt positions
+    # and yields a too-sharp reference; averaging over the last K=5 gives
+    # noise reduction without that bias.
+    REF_WINDOW = 5
+    if prior_kind in SHAPE_ESTIMATORS:
+        prompt_logits = out.logits.float()                              # (B, P, V)
+        mask_f = attention_mask.to(prompt_logits.dtype)                  # (B, P)
+        # Build a weight mask over the last REF_WINDOW REAL positions per row.
+        # cum_from_end counts real positions counting back from the end.
+        rev_cum = mask_f.flip(dims=[1]).cumsum(dim=1).flip(dims=[1])     # (B, P)
+        in_window = (rev_cum <= REF_WINDOW) & (mask_f > 0)               # (B, P)
+        w = in_window.to(prompt_logits.dtype)                            # (B, P)
+        if prior_kind == "rank_gap":
+            top_p = topk_logits_sorted(
+                prompt_logits.reshape(-1, V), rank_gap_K
+            )                                                            # (B*P, K+1)
+            gaps_p = rank_gaps(top_p).reshape(B, P, rank_gap_K)          # (B, P, K)
+            ww = w.unsqueeze(-1)                                         # (B, P, 1)
+            denom = ww.sum(dim=1).clamp_min(1.0)                         # (B, 1)
+            rank_gap_reference = (gaps_p * ww).sum(dim=1) / denom        # (B, K)
+        elif prior_kind == "renyi_infty":
+            h_p = renyi_infty_from_logits(
+                prompt_logits.reshape(-1, V)
+            ).reshape(B, P)                                              # (B, P)
+            denom = w.sum(dim=1).clamp_min(1.0)                          # (B,)
+            renyi_reference = (h_p * w).sum(dim=1) / denom               # (B,)
+
     # Storage
     T = max_tokens
     sampled = torch.zeros(B, T, device=device, dtype=torch.long)
@@ -350,12 +400,21 @@ def _generate_batch(
         if laplace_state is not None:
             beta_hat_now = laplace_state.beta_hat()
             J_now = laplace_state.J
-        else:
-            assert grid_state is not None
+        elif grid_state is not None:
             beta_hat_now = grid_state.beta_hat()
             # No "J" in the discrete filter; record posterior precision on log β as 1/std².
             std_lb = grid_state.posterior_std_log_beta()
             J_now = 1.0 / std_lb.clamp_min(1e-3) ** 2
+        elif prior_kind == "rank_gap":
+            assert rank_gap_reference is not None
+            beta_hat_now = estimate_beta_rank_gap(logits_t, rank_gap_reference)
+            J_now = torch.zeros(B, device=device, dtype=torch.float32)
+        elif prior_kind == "renyi_infty":
+            assert renyi_reference is not None
+            beta_hat_now = estimate_beta_renyi_infty(logits_t, renyi_reference)
+            J_now = torch.zeros(B, device=device, dtype=torch.float32)
+        else:
+            raise ValueError(f"unknown prior_kind: {prior_kind}")
 
         # β_dec_t = β_target/β̂_t for corrected arm; β_target for uncorrected.
         beta_dec_t = torch.where(
@@ -376,7 +435,8 @@ def _generate_batch(
         x_t = sample_under_beta(logits_t, beta_dec_t, generator=gen)  # (B,)
 
         # Streaming filter update (Laplace OR discrete-grid), with optional
-        # evidence_weight (α) and memory_decay (γ).
+        # evidence_weight (α) and memory_decay (γ). Shape estimators have no
+        # state to update — β̂ is read off ℓ_t and a fixed reference.
         if laplace_state is not None:
             laplace_state, score_t, fisher_t = laplace_update(
                 laplace_state,
@@ -387,8 +447,7 @@ def _generate_batch(
                 prior_eta=laplace_prior_eta,
                 prior_J=laplace_prior_J,
             )
-        else:
-            assert grid_state is not None
+        elif grid_state is not None:
             grid_state = discrete_grid_update_batched(
                 grid_state,
                 logits_t,
@@ -404,6 +463,11 @@ def _generate_batch(
             score_t = torch.log(new_bh) - torch.log(beta_hat_now)
             new_J = 1.0 / grid_state.posterior_std_log_beta().clamp_min(1e-3) ** 2
             fisher_t = (new_J - J_now).clamp_min(0.0)
+        else:
+            # Shape estimators: no filter update. β̂_{t+1} will be computed from
+            # the next step's ℓ_{t+1} and the same fixed reference.
+            score_t = torch.zeros(B, device=device, dtype=torch.float32)
+            fisher_t = torch.zeros(B, device=device, dtype=torch.float32)
 
         # Save per-step diagnostics.
         sampled[:, t] = x_t
@@ -459,8 +523,7 @@ def _generate_batch(
     if laplace_state is not None:
         eta_final = laplace_state.eta_hat.detach().cpu().numpy().astype(np.float32)
         J_final = laplace_state.J.detach().cpu().numpy().astype(np.float32)
-    else:
-        assert grid_state is not None
+    elif grid_state is not None:
         # For the discrete filter, η̂_final is log(posterior mean), and J_final
         # is the inverse posterior variance on log β.
         eta_final = torch.log(grid_state.beta_hat()).detach().cpu().numpy().astype(np.float32)
@@ -471,6 +534,11 @@ def _generate_batch(
             .numpy()
             .astype(np.float32)
         )
+    else:
+        # Shape estimator: no posterior. Take the last-step β̂ as the "final"
+        # estimate, and zero out the precision (J undefined for shape readout).
+        eta_final = np.log(beta_hat_pre_arr[:, -1]).astype(np.float32)
+        J_final = np.zeros(B, dtype=np.float32)
 
     return GenerationResult(
         sampled_token_ids=sampled.cpu().numpy().astype(np.int64),

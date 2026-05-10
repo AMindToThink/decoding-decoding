@@ -31,9 +31,14 @@ from decoding_decoding.counter_decode import (
     LaplaceState,
     discrete_grid_posterior_mean,
     discrete_grid_update,
+    estimate_beta_rank_gap,
+    estimate_beta_renyi_infty,
     init_laplace,
     laplace_update,
+    rank_gaps,
+    renyi_infty_from_logits,
     sample_under_beta,
+    topk_logits_sorted,
 )
 
 
@@ -424,3 +429,85 @@ def test_discrete_grid_filter_walkthrough_two_token() -> None:
         state = discrete_grid_update_batched(
             state, logits, torch.tensor([0], dtype=torch.long), grid_chunk=3
         )
+
+
+# ---------------------------------------------------------------------------
+# Shape-based β̂ estimators (non-bootstrap)
+# ---------------------------------------------------------------------------
+
+
+def test_rank_gap_recovers_exact_beta_under_pure_rescaling() -> None:
+    """ℓ_t = β · ℓ_ref ⇒ rank-gap β̂ recovers β exactly (no rank-churn case)."""
+    torch.manual_seed(0)
+    V = 5000
+    K = 20
+    base = torch.randn(1, V)  # natural-shape logits
+    base_sorted = topk_logits_sorted(base, K)
+    ref_gaps = rank_gaps(base_sorted)  # (1, K)
+    for beta_true in (0.25, 0.5, 1.0, 2.0, 4.0):
+        scaled = beta_true * base
+        beta_hat = estimate_beta_rank_gap(scaled, ref_gaps).item()
+        assert abs(beta_hat - beta_true) < 1e-4, (
+            f"β_true={beta_true}, got β̂={beta_hat}"
+        )
+
+
+def test_rank_gap_translation_invariance() -> None:
+    """Adding a constant to all logits leaves softmax unchanged; rank gaps too."""
+    torch.manual_seed(1)
+    V = 1000
+    K = 10
+    base = torch.randn(1, V)
+    shifted = base + 17.3
+    K_eff = K
+    ref_gaps = rank_gaps(topk_logits_sorted(base, K_eff))
+    beta_hat = estimate_beta_rank_gap(shifted, ref_gaps).item()
+    assert abs(beta_hat - 1.0) < 1e-4
+
+
+def test_renyi_infty_bisection_recovers_beta_under_rescaling() -> None:
+    """ℓ_t = β · ℓ_ref ⇒ Rényi-∞ bisection β̂ ≈ β."""
+    torch.manual_seed(2)
+    V = 5000
+    base = torch.randn(1, V)
+    ref_h = renyi_infty_from_logits(base)
+    for beta_true in (0.25, 0.5, 1.0, 2.0, 4.0):
+        scaled = beta_true * base
+        beta_hat = estimate_beta_renyi_infty(scaled, ref_h, n_iter=40).item()
+        # 40 bisection iterations on log β span [-4, 4] → resolution ~5e-3 in β.
+        assert abs(beta_hat - beta_true) < 1e-2, (
+            f"β_true={beta_true}, got β̂={beta_hat}"
+        )
+
+
+def test_renyi_infty_from_logits_matches_formula() -> None:
+    """H_∞ = -log max softmax(ℓ) = logsumexp(ℓ) - max ℓ."""
+    torch.manual_seed(3)
+    V = 200
+    base = torch.randn(3, V)
+    h = renyi_infty_from_logits(base)
+    p = torch.softmax(base, dim=-1)
+    expected = -torch.log(p.amax(dim=-1))
+    assert torch.allclose(h, expected, atol=1e-5)
+
+
+def test_shape_estimators_no_bootstrap_dependence_on_sampled_token() -> None:
+    """Critical: β̂ from shape estimators does NOT depend on the sampled token.
+
+    Sanity check that the API never references x_t. If we re-call with the
+    same logits but different (irrelevant) integer "tokens," β̂ is identical.
+    """
+    torch.manual_seed(4)
+    V = 2000
+    base = torch.randn(2, V)
+    scaled = 2.5 * base
+    ref_gaps = rank_gaps(topk_logits_sorted(base, 16))
+    ref_h = renyi_infty_from_logits(base)
+    # The shape-estimator API doesn't accept sampled tokens at all. This test
+    # documents that fact: API signature has no x_t parameter, so there's
+    # no way for the estimator to be contaminated.
+    b1 = estimate_beta_rank_gap(scaled, ref_gaps)
+    b2 = estimate_beta_renyi_infty(scaled, ref_h)
+    # Sanity: both report β̂ ≈ 2.5.
+    assert torch.allclose(b1, torch.tensor([2.5, 2.5]), atol=1e-3)
+    assert torch.allclose(b2, torch.tensor([2.5, 2.5]), atol=1e-2)

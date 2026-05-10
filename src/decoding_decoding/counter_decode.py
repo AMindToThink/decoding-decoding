@@ -444,6 +444,161 @@ def init_discrete_grid_state(
 
 
 # ---------------------------------------------------------------------------
+# Shape-based β̂ estimators (non-bootstrap)
+# ---------------------------------------------------------------------------
+#
+# Both estimators read β_model directly from the shape of ℓ_t (the model's own
+# prediction over the next-token distribution), not from the sampled token x_t.
+# Because they don't condition on x_t, they break the bootstrap circularity
+# inherent to streaming Bayesian filters: there is no fixed point at which
+# β̂ → β_target.
+#
+# Convention: ℓ_t may be uncentered. Under a pure β-rescaling ℓ ↦ β·ℓ, both
+# the rank-gap statistic Δ_k and the Rényi-∞ entropy H_∞ are equivariant in a
+# specific way:
+#   Δ_k(βℓ)        = β · Δ_k(ℓ)               (exact)
+#   H_∞(softmax(βℓ)) is monotone in β       (monotonically increasing → log V
+#                                              as β → ∞, → 0 as β → 0⁺).
+#
+# Reference convention: capture the reference at t=0 (first generated token,
+# after consuming the prompt). At t=0 we *assume* β_model ≈ 1 because the
+# model has not yet drifted under any committed continuation. Subsequent
+# β̂_t is reported relative to that reference. This is a free choice of gauge
+# (any anchor would do); the corrector only cares about *ratios*, so as long
+# as the reference is consistent the cancellation of β_target / β̂_t works.
+
+
+def topk_logits_sorted(logits: torch.Tensor, K: int) -> torch.Tensor:
+    """Return the top-(K+1) logits sorted in descending order.
+
+    Args:
+        logits: (B, V).
+        K: number of rank-gaps to support. Returns (B, K+1) so we can form K gaps.
+    """
+    if K < 1:
+        raise ValueError(f"K must be ≥ 1, got {K}")
+    top, _ = torch.topk(logits, k=K + 1, dim=-1, sorted=True)
+    return top  # (B, K+1)
+
+
+def rank_gaps(top_sorted_logits: torch.Tensor) -> torch.Tensor:
+    """Δ_k = ℓ_(k) − ℓ_(k+1) for k = 1..K.
+
+    Args:
+        top_sorted_logits: (B, K+1), the output of `topk_logits_sorted`.
+    Returns:
+        gaps: (B, K), all non-negative since input is sorted descending.
+    """
+    return top_sorted_logits[..., :-1] - top_sorted_logits[..., 1:]
+
+
+def estimate_beta_rank_gap(
+    logits: torch.Tensor,
+    reference_gaps: torch.Tensor,
+    *,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """Rank-gap β̂ estimator.
+
+    Formula (per trajectory):
+        ℓ_(k)^(t) sorted descending; Δ_k^(t) = ℓ_(k)^(t) − ℓ_(k+1)^(t).
+        β̂_t = median_{k=1..K} ( Δ_k^(t) / Δ_k^(ref) ).
+
+    Under ℓ ↦ β · ℓ each Δ_k scales by exactly β (β-equivariant), so the
+    ratio is an unbiased per-rank estimate of β. The median over k makes the
+    statistic robust to changes in which tokens occupy each rank between
+    reference and current step.
+
+    Args:
+        logits: (B, V) current step logits (uncentered is fine — gaps are
+            translation-invariant).
+        reference_gaps: (B, K) reference gaps captured at t=0 per trajectory.
+        eps: tiny epsilon to avoid divide-by-zero on degenerate references.
+
+    Returns:
+        beta_hat: (B,) point estimate of β_model_t relative to the t=0 reference.
+    """
+    if logits.dim() != 2:
+        raise ValueError(f"logits must be (B, V), got {tuple(logits.shape)}")
+    if reference_gaps.dim() != 2:
+        raise ValueError(
+            f"reference_gaps must be (B, K), got {tuple(reference_gaps.shape)}"
+        )
+    B = logits.shape[0]
+    if reference_gaps.shape[0] != B:
+        raise ValueError(
+            f"reference_gaps batch dim {reference_gaps.shape[0]} != logits batch dim {B}"
+        )
+    K = reference_gaps.shape[-1]
+    top = topk_logits_sorted(logits, K)        # (B, K+1)
+    gaps = rank_gaps(top)                       # (B, K)
+    ratios = gaps / reference_gaps.clamp_min(eps)
+    return ratios.median(dim=-1).values         # (B,)
+
+
+def renyi_infty_from_logits(logits: torch.Tensor) -> torch.Tensor:
+    """H_∞(softmax(ℓ)) = log Σ exp ℓ − max ℓ = −log max softmax(ℓ).
+
+    Args:
+        logits: (B, V).
+    Returns:
+        h_inf: (B,) Rényi-∞ entropy in nats, ≥ 0.
+    """
+    return torch.logsumexp(logits, dim=-1) - logits.amax(dim=-1)
+
+
+def estimate_beta_renyi_infty(
+    logits: torch.Tensor,
+    reference_h_inf: torch.Tensor,
+    *,
+    log_beta_lo: float = -4.0,
+    log_beta_hi: float = 4.0,
+    n_iter: int = 30,
+) -> torch.Tensor:
+    """Rényi-∞ β̂ estimator via bisection.
+
+    Find β̂_t such that H_∞(softmax(ℓ_t / β̂_t)) = H_∞^(ref).
+
+    Monotonicity argument: as c grows, ℓ/c flattens, softmax(ℓ/c) approaches
+    uniform, H_∞ → log V. As c → 0⁺, softmax(ℓ/c) concentrates on argmax,
+    H_∞ → 0. So H_∞(softmax(ℓ/c)) is strictly monotone-increasing in c.
+
+    Interpretation: if H_∞(softmax(ℓ_t)) is SMALLER than reference (sharper
+    than at t=0), then β̂ > 1 — the model has self-imprinted. Dividing ℓ_t by
+    β̂ recovers the reference shape.
+
+    Args:
+        logits: (B, V).
+        reference_h_inf: (B,) reference H_∞ captured at t=0.
+        log_beta_lo, log_beta_hi: bisection bracket on log β̂.
+        n_iter: bisection iterations (30 → ~1e-9 precision on log β̂).
+
+    Returns:
+        beta_hat: (B,) point estimate.
+    """
+    if logits.dim() != 2:
+        raise ValueError(f"logits must be (B, V), got {tuple(logits.shape)}")
+    B = logits.shape[0]
+    if reference_h_inf.shape != (B,):
+        raise ValueError(
+            f"reference_h_inf must be (B,)={B}, got {tuple(reference_h_inf.shape)}"
+        )
+    device = logits.device
+    dtype = logits.dtype
+    lo = torch.full((B,), float(log_beta_lo), device=device, dtype=dtype)
+    hi = torch.full((B,), float(log_beta_hi), device=device, dtype=dtype)
+    for _ in range(n_iter):
+        mid = 0.5 * (lo + hi)
+        beta = torch.exp(mid)
+        scaled = logits / beta.unsqueeze(-1)
+        h = renyi_infty_from_logits(scaled)
+        too_low = h < reference_h_inf          # need bigger β
+        lo = torch.where(too_low, mid, lo)
+        hi = torch.where(too_low, hi, mid)
+    return torch.exp(0.5 * (lo + hi))
+
+
+# ---------------------------------------------------------------------------
 # Sampling under counter-decoded distribution
 # ---------------------------------------------------------------------------
 
