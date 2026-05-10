@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>In-Context Inference of Sampling Parameters</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script>
+  MathJax = {
+    tex: {
+      inlineMath: [['$', '$'], ['\\(', '\\)']],
+      displayMath: [['$$', '$$'], ['\\[', '\\]']]
+    },
+    svg: { fontCache: 'global' }
+  };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+  :root {
+    --paper: #f6f1e8;
+    --ink: #1a1814;
+    --ink-soft: #4a4438;
+    --rule: #c9bfae;
+    --accent: #a8412a;
+    --highlight: #f0e6d2;
+    --sidenote: #6b6453;
+    --code-bg: #ede5d4;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 17px;
+    line-height: 1.55;
+    color: var(--ink);
+    background: var(--paper);
+    margin: 0;
+    padding: 0;
+    font-feature-settings: "onum", "kern";
+  }
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 4rem 3rem 6rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 3rem;
+  }
+  main { grid-column: 1; }
+  aside.toc {
+    grid-column: 2;
+    position: sticky;
+    top: 2rem;
+    align-self: start;
+    font-size: 14px;
+    color: var(--sidenote);
+    border-left: 1px solid var(--rule);
+    padding-left: 1.25rem;
+  }
+  aside.toc h4 {
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 11px;
+    color: var(--ink-soft);
+    margin: 0 0 1rem 0;
+  }
+  aside.toc ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    counter-reset: toc;
+  }
+  aside.toc li {
+    counter-increment: toc;
+    margin-bottom: 0.5rem;
+    line-height: 1.35;
+  }
+  aside.toc li::before {
+    content: counter(toc, decimal-leading-zero);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--accent);
+    margin-right: 0.6rem;
+  }
+  aside.toc a {
+    color: var(--sidenote);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: all 0.2s;
+  }
+  aside.toc a:hover {
+    color: var(--ink);
+    border-bottom-color: var(--accent);
+  }
+
+  header.masthead {
+    border-top: 3px solid var(--ink);
+    border-bottom: 1px solid var(--rule);
+    padding: 1.5rem 0;
+    margin-bottom: 3rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--ink-soft);
+  }
+  header.masthead .meta-right { color: var(--accent); }
+
+  h1.title {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 3.2rem;
+    line-height: 1.05;
+    margin: 0 0 0.6rem 0;
+    color: var(--ink);
+    font-variation-settings: "opsz" 144, "SOFT" 50;
+    letter-spacing: -0.015em;
+  }
+  p.dek {
+    font-family: 'Fraunces', serif;
+    font-weight: 400;
+    font-style: italic;
+    font-size: 1.35rem;
+    line-height: 1.4;
+    color: var(--ink-soft);
+    margin: 0 0 3rem 0;
+    max-width: 38em;
+  }
+
+  h2 {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 1.7rem;
+    margin: 4rem 0 1rem 0;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rule);
+    line-height: 1.2;
+  }
+  h2 .num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: var(--accent);
+    margin-right: 0.8rem;
+    letter-spacing: 0.1em;
+    vertical-align: 0.3em;
+  }
+  h3 {
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    font-size: 1.2rem;
+    margin: 2rem 0 0.6rem 0;
+    color: var(--ink);
+  }
+
+  p { margin: 0 0 1.1rem 0; max-width: 38em; }
+  p.lead {
+    font-size: 1.15rem;
+    line-height: 1.5;
+  }
+  p.lead::first-letter {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 3.2rem;
+    float: left;
+    line-height: 0.85;
+    margin: 0.15em 0.08em 0 0;
+    color: var(--accent);
+  }
+
+  blockquote {
+    margin: 1.5rem 0;
+    padding: 0.6rem 0 0.6rem 1.4rem;
+    border-left: 2px solid var(--accent);
+    color: var(--ink-soft);
+    font-style: italic;
+    max-width: 36em;
+  }
+
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.88em;
+    background: var(--code-bg);
+    padding: 0.1em 0.35em;
+    border-radius: 2px;
+  }
+
+  .callout {
+    background: var(--highlight);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    padding: 1.2rem 1.4rem;
+    margin: 1.8rem 0;
+    max-width: 38em;
+  }
+  .callout .label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    margin-bottom: 0.5rem;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .experiment {
+    border: 1px solid var(--rule);
+    background: rgba(255,255,255,0.4);
+    padding: 1.4rem 1.6rem;
+    margin: 1.5rem 0;
+    max-width: 40em;
+    position: relative;
+  }
+  .experiment .tag {
+    position: absolute;
+    top: -10px;
+    left: 1.4rem;
+    background: var(--paper);
+    padding: 0 0.6rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+  }
+  .experiment h3 {
+    margin-top: 0.3rem;
+    font-size: 1.1rem;
+  }
+  .experiment .field {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--ink-soft);
+    margin-top: 1rem;
+    margin-bottom: 0.3rem;
+  }
+  .experiment .field-content { margin: 0; max-width: none; }
+
+  .priors {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    background: var(--code-bg);
+    padding: 0.5rem 0.8rem;
+    border-left: 2px solid var(--rule);
+    display: inline-block;
+    margin: 0.4rem 0;
+  }
+
+  figure.diagram {
+    margin: 2.5rem 0;
+    max-width: 42em;
+  }
+  figure.diagram svg { width: 100%; height: auto; display: block; }
+  figure.diagram figcaption {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 0.95rem;
+    color: var(--ink-soft);
+    margin-top: 0.8rem;
+    line-height: 1.4;
+    max-width: 36em;
+  }
+  figure.diagram figcaption .figlabel {
+    font-family: 'JetBrains Mono', monospace;
+    font-style: normal;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    margin-right: 0.5rem;
+  }
+
+  .refs { margin-top: 1.5rem; max-width: 42em; }
+  .ref {
+    display: grid;
+    grid-template-columns: 3rem 1fr;
+    gap: 0.8rem;
+    padding: 0.8rem 0;
+    border-bottom: 1px solid var(--rule);
+    font-size: 0.95rem;
+    line-height: 1.4;
+  }
+  .ref:last-child { border-bottom: none; }
+  .ref .key {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--accent);
+    padding-top: 0.15rem;
+  }
+  .ref .body em { color: var(--ink); font-style: italic; }
+  .ref .body .meta { color: var(--sidenote); font-size: 0.85rem; }
+
+  ul.clean { padding-left: 1.2rem; max-width: 38em; }
+  ul.clean li { margin-bottom: 0.5rem; }
+
+  hr.end {
+    border: none;
+    border-top: 1px solid var(--rule);
+    margin: 4rem 0 2rem 0;
+    max-width: 38em;
+    position: relative;
+  }
+  hr.end::after {
+    content: "◊";
+    position: absolute;
+    top: -0.7em;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--paper);
+    padding: 0 0.8rem;
+    color: var(--accent);
+  }
+
+  @media (max-width: 900px) {
+    .page { grid-template-columns: 1fr; padding: 2rem 1.5rem; }
+    aside.toc { display: none; }
+    h1.title { font-size: 2.3rem; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+<main>
+
+<header class="masthead">
+  <span>Research memo / draft</span>
+  <span class="meta-right">v0.1</span>
+</header>
+
+<h1 class="title">In-context inference of decoding parameters</h1>
+
+<p class="dek">A research project plan. The decoder modifies the model's distribution at each step; the resulting prefix carries the decoder's statistical signature; the model conditions on that signature when producing its next distribution. Decoding parameters end up imprinted on the model's behavior beyond their explicit per-step application. Sharpening, for example, is applied twice per cycle.</p>
+
+<h2><span class="num">01</span> The phenomenon</h2>
+
+<p class="lead">When sampling from an autoregressive language model under any decoder that modifies the next-token distribution, the prefix produced under that decoder carries its statistical signature. The model is a Bayesian conditioner on its prefix, so it produces a next-token distribution that already reflects that signature, and the same decoder is then applied to the result. The decoder's effect is felt twice per cycle, once explicitly at the truncation or rescaling step, and once implicitly through the prefix the decoder helped produce.</p>
+
+<p>The general claim is that the model performs in-context inference of decoder-induced latent variables, in the same sense that Xie et al. <span class="priors">[Xie22]</span> formalize in-context learning as Bayesian inference over a latent concept. The decoder is just another source of statistical regularity in the prefix, indistinguishable in principle from any other latent the model might be inferring. The practitioner did not put it there on purpose.</p>
+
+<p>Sharpening is the lead example and the most consequential bug. Under aggressive truncation (low $k$, low $p$), shape features of $P_\phi(\cdot \mid x_{\lt t})$ drift toward sharper as $t$ grows, because the prefix looks increasingly like text that comes from a sharp distribution. Mirostat <span class="priors">[Basu21]</span> documents this as the boredom trap. But the underlying phenomenon is more general. Flattening (T &gt; 1) should compound in the opposite direction, with the model producing flatter distributions in response to flatter-looking prefixes, contributing to the confusion-trap end of Mirostat's findings. Even at $T = 1$ and unconstrained sampling there could be drift, if the in-context inference is sensitive enough that small statistical accidents in the prefix nudge subsequent predictions in a self-amplifying direction. Vocabulary biases (blacklists, frequency penalties) should leave token-identity-level imprints rather than just aggregate-statistics imprints. The full topic is the family of consequences, not the sharpening case alone.</p>
+
+<figure class="diagram">
+<svg viewBox="0 0 760 360" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1a1814"/>
+    </marker>
+    <marker id="arrAccent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#a8412a"/>
+    </marker>
+  </defs>
+
+  <rect x="20" y="80" width="150" height="70" rx="3" fill="#f0e6d2" stroke="#1a1814" stroke-width="1.2"/>
+  <text x="95" y="108" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" fill="#4a4438">model</text>
+  <text x="95" y="132" text-anchor="middle" font-family="Fraunces, serif" font-size="16" font-style="italic">P_φ(·|x_&lt;t)</text>
+
+  <line x1="170" y1="115" x2="240" y2="115" stroke="#a8412a" stroke-width="1.5" marker-end="url(#arrAccent)"/>
+  <text x="205" y="105" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="#a8412a">S_θ</text>
+  <text x="205" y="135" text-anchor="middle" font-family="Source Serif 4, serif" font-size="10" font-style="italic" fill="#a8412a">explicit</text>
+
+  <rect x="240" y="80" width="160" height="70" rx="3" fill="#fff" stroke="#1a1814" stroke-width="1.2"/>
+  <text x="320" y="108" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" fill="#4a4438">truncated</text>
+  <text x="320" y="132" text-anchor="middle" font-family="Fraunces, serif" font-size="16" font-style="italic">S_θ(P_φ(·|x_&lt;t))</text>
+
+  <line x1="400" y1="115" x2="470" y2="115" stroke="#1a1814" stroke-width="1.2" marker-end="url(#arr)"/>
+  <text x="435" y="105" text-anchor="middle" font-family="Source Serif 4, serif" font-size="11" font-style="italic">sample</text>
+
+  <rect x="470" y="85" width="80" height="60" rx="3" fill="#fff" stroke="#1a1814" stroke-width="1.2"/>
+  <text x="510" y="120" text-anchor="middle" font-family="Fraunces, serif" font-size="18" font-style="italic">x_t</text>
+
+  <path d="M 510 145 Q 510 220 360 240 L 240 240" stroke="#1a1814" stroke-width="1.2" fill="none" marker-end="url(#arr)"/>
+  <text x="380" y="225" text-anchor="middle" font-family="Source Serif 4, serif" font-size="11" font-style="italic">append, increment t</text>
+
+  <rect x="80" y="220" width="160" height="60" rx="3" fill="#fff" stroke="#1a1814" stroke-width="1.2"/>
+  <text x="160" y="245" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" fill="#4a4438">prefix</text>
+  <text x="160" y="265" text-anchor="middle" font-family="Fraunces, serif" font-size="16" font-style="italic">x_&lt;t+1</text>
+
+  <path d="M 80 250 Q 30 250 30 180 Q 30 115 95 115" stroke="#a8412a" stroke-width="1.5" stroke-dasharray="4 3" fill="none" marker-end="url(#arrAccent)"/>
+  <text x="20" y="190" font-family="JetBrains Mono, monospace" font-size="10" fill="#a8412a">S_θ</text>
+  <text x="20" y="205" font-family="Source Serif 4, serif" font-size="10" font-style="italic" fill="#a8412a">implicit</text>
+
+  <text x="380" y="320" text-anchor="middle" font-family="Fraunces, serif" font-size="13" font-style="italic" fill="#4a4438">
+    The dashed pathway is the imprint. Every cycle includes both applications of S_θ.
+  </text>
+</svg>
+<figcaption><span class="figlabel">Fig. 1</span>One decoding cycle. The explicit application of $S_\theta$ truncates or rescales the model's distribution. The implicit application is the conditioning of $P_\phi$ on a prefix whose statistics already reflect $S_\theta$. The dashed pathway is the imprint, and it compounds across $t$. Sharpening is the lead instance shown here, but $S_\theta$ stands for any decoder that modifies $P_\phi$.</figcaption>
+</figure>
+
+<h2><span class="num">02</span> Notation and the testable claim</h2>
+
+<p>Let $P_\phi$ denote the model's pre-decoding next-token distribution and $D_\theta$ a decoder operator parameterized by some $\theta$. The decoder maps a distribution to a (typically modified) distribution and the next token is drawn from the result. Examples include sharpening operators $S_\theta$ (top-$k$, top-$p$, low-temperature scaling, min-$p$), flattening operators (high-temperature scaling), vocabulary-mask operators (blacklists, frequency penalties), and identity (default sampling). One step of decoding produces $x_t \sim D_\theta(P_\phi(\cdot \mid x_{\lt t}))$ and the prefix updates to $x_{\lt t+1}$. The sharpening case $D_\theta = S_\theta$ is what most existing work addresses, and most of our concrete experiments below sit there too, but the framework and the testable claim apply to any $D_\theta$.</p>
+
+<p>Mirostat measured the sharpening case at the level of average per-token surprise of the realized tokens, $-\log P_\phi(x_t \mid x_{\lt t})$, plotted against $t$. Our framing measures shape features of $P_\phi$ itself (cumulative top-$N$ mass, entropy, max-prob, position-specific probability of a marked token), which speaks more directly to the imprint than the realized-token surprise does. The realized-token measurement conflates the prefix imprint with which token got drawn out of $D_\theta(P_\phi)$. Measuring $P_\phi$ before the explicit $D_\theta$ isolates the prefix contribution.</p>
+
+<p>The minimal testable claim is that some feature of $P_\phi(\cdot \mid x_{\lt t})$ moves systematically with $\theta$ and with $t$, and the joint dependence is non-trivial. Stronger claims layer on top, including that the dependence is on $\theta$-induced statistics of the prefix rather than on a sampler-specific signature, that the inference picks up on more than just aggregate entropy, and that the imprint family extends to non-sharpening decoders (flattening, blacklists, possibly drift even at the identity).</p>
+
+<h2><span class="num">03</span> Why this is not just Mirostat</h2>
+
+<p>Mirostat <span class="priors">[Basu21]</span> identified the symptom in the sharpening case and gave a closed-loop fix. Their boredom trap is the same drift, observed at the realized-surprise level, with a control-theoretic remedy that adjusts $k$ each step to hold per-token surprise at a target. Beyond the obvious limitation that Mirostat addresses sharpening rather than the general $D_\theta$ family, three further gaps remain even within the sharpening case.</p>
+
+<h3>Mechanism</h3>
+<p>Mirostat's analysis assumes Zipfian token statistics and derives perplexity dynamics from there. The Zipfian assumption smuggles in the prefix-imprint mechanism without naming it, and the analysis does not connect to in-context-learning theory. An ICL-as-Bayesian-inference framing predicts the imprint as a generic consequence of conditioning on a prefix whose statistics reflect the decoder, applies to any latent the decoder induces, and connects the phenomenon to the broader literature on in-context inference.</p>
+
+<h3>Resolution</h3>
+<p>Mirostat tracks aggregate surprise. If the model's in-context inference operates at higher resolution, picking up on token-identity-level properties of the decoder (a specific blacklist, an idiosyncratic vocabulary suppression), Mirostat would not see this. The prediction worth testing is that the imprint is multi-dimensional and not summarizable as a scalar entropy quantity.</p>
+
+<h3>Task-relativity</h3>
+<p>Mirostat assumes open-ended diverse generation as the universal goal and treats low entropy as a pathology. For tasks where low entropy is the correct output (verbatim repetition, code under strict syntactic constraints, structured-format generation, list continuation, formulaic translation), Mirostat injects entropy that breaks the task. The imprint is a bug only when the model's inferred latent does not match user intent, and a feature when it does. Any treatment of the phenomenon that does not respect this distinction is going to mis-correct on the wrong workloads. The same caveat applies in advance to any future fix for the flattening or vocabulary-bias cases.</p>
+
+<div class="callout">
+<div class="label">Framing claim</div>
+<p>The phenomenon is a generic consequence of in-context Bayesian inference applied to decoder-induced statistics. The right level of analysis is "what dimensions of the prefix does the model condition on, and how strongly," not "what is the average surprise." Decoding-time correctives should be designed to respect the dimensions that match user intent and override the ones that do not, across the full $D_\theta$ family.</p>
+</div>
+
+<h2><span class="num">04</span> Experiments</h2>
+
+<p>The experimental program has four components, in roughly increasing setup cost. The first is already running. The toy model organism is a longer-horizon companion experiment whose role is to provide ground truth that natural language does not.</p>
+
+<div class="experiment">
+<span class="tag">A · baseline</span>
+<h3>Distribution-shape features as a function of length and $\theta$</h3>
+<p class="field-content">Sample from base language models under a sweep of $\theta$ that covers sharpening (low $k$, low $p$, $T \lt 1$), flattening ($T \gt 1$), and the identity (default sampling). At each position $t$, record shape features of $P_\phi(\cdot \mid x_{\lt t})$ before any decoder modification. Repeat across many seeds and prompts, average. Plot features vs $t$ for each $\theta$.</p>
+<div class="field">measures</div>
+<p class="field-content">Cumulative probability on top-$N$ tokens for several $N$, max-probability, Shannon entropy, effective support size $\exp(H)$.</p>
+<div class="field">prediction</div>
+<p class="field-content">Tested top-$k$ regimes so far: $k = 1$ (greedy), $k = 3$, $k = 5$, $k = \infty$ (default sampling). Under low-$k$ truncation ($k = 3, 5$), spread features drift toward sharper as $t$ grows. Confirmed up to 1024-token generations, no reversal observed; the trend is one-signed at the lengths we test $_{95\%}$. Under greedy ($k = 1$), the distribution sharpens fast and stays sharp (confirmed). Under default ($k = \infty$), drift toward flatter is observed (confirmed). Untested but predicted: under flattening ($T \gt 1$), one-signed flattening drift $_{80\%}$, stronger than default-sampling flattening drift $_{75\%}$, since higher tail mass means more off-distribution accumulation per step. Top-$p$ sweeps and other vocabulary biases also untested.</p>
+<div class="field">unified picture</div>
+<p class="field-content">The three confirmed regimes have a common explanation. The decoder modulates how the prefix relates to the model's training distribution. Sharpening pushes the prefix into the mode (more in-distribution than natural text, which has tail draws); the model infers a low-entropy text-type and tightens its predictions. Default sampling and (predicted) flattening accumulate tail tokens; the prefix drifts off-distribution; the model becomes less confident and predictions flatten. Under this account, ICL of decoder parameters is the model correctly inferring what kind of text-generation process produced this prefix and conditioning accordingly. Exposure bias is what makes the prefix carry that information, and the in-context inference is what makes the model use it. The two stories that have lived separately in the decoding literature (self-reinforcement under truncation, exposure-bias degeneration under unconstrained sampling) become two limits of the same mechanism.</p>
+</div>
+
+<div class="experiment">
+<span class="tag">B · resolution</span>
+<h3>Blacklist test for token-identity-level inference</h3>
+<p class="field-content">Sample under a sampler that suppresses a specific common token (e.g. "the") and otherwise leaves the distribution intact. Measure $P_\phi(\text{the} \mid x_{\lt t})$ at the pre-decoding level, as a function of $t$, against a no-blacklist control matched on prompt and seed.</p>
+<div class="field">measures</div>
+<p class="field-content">Pre-decoding probability mass on the blacklisted token over time. Whether the model's distribution suppresses it before $S_\theta$ is applied.</p>
+<div class="field">prediction</div>
+<p class="field-content">The pre-decoding probability of the blacklisted token decays with $t$, demonstrating that the model picks up on token-identity-level sampler properties, not just aggregate entropy. Confidence $_{75\%}$. The reverse outcome would be informative and update toward "imprint is a coarse-statistics phenomenon, Mirostat's framing is approximately complete."</p>
+</div>
+
+<div class="experiment">
+<span class="tag">C · persistence</span>
+<h3>Switch from $\theta$ to defaults, observe imprint decay</h3>
+<p class="field-content">Sample $N$ tokens at some $\theta$, then switch to default sampling parameters for $M$ tokens. Measure shape features of $P_\phi$ at each of those $M$ positions, averaged over many runs. Critical control. A second run where all $N+M$ tokens are sampled at defaults from the start, providing the "no imprint" baseline trajectory.</p>
+<div class="field">measures</div>
+<p class="field-content">How fast features of $P_\phi$ over the post-switch positions return to the all-default baseline. Define a recovery length $M^\ast$ as the position at which the switched run is statistically indistinguishable from the all-default control.</p>
+<div class="field">prediction</div>
+<p class="field-content">Imprint dissipates within $M^\ast$ of order tens of tokens, not hundreds. Confidence $_{75\%}$. A finding that the imprint is sticky (no $M^\ast$ within reasonable $M$) would be more interesting and would imply the imprint is something like an installed inference about latent text-type rather than a moment-to-moment statistical refresh.</p>
+</div>
+
+<div class="experiment">
+<span class="tag">D · reference</span>
+<h3>WebText baseline as the no-sampler reference</h3>
+<p class="field-content">For prefixes drawn from natural-text sources the model saw during training, compute the same shape features of $P_\phi$ at matched positions. Use this as the "naturally produced, no sampler imprint" reference against which to compare the imprint trajectories from experiment A.</p>
+<div class="field">measures</div>
+<p class="field-content">Distance from natural-text trajectories to sampler-imprinted trajectories, as a function of $\theta$ and $t$. Quantifies how much the imprint deviates from the model's behavior on training-distribution prefixes.</p>
+<div class="field">prediction</div>
+<p class="field-content">Natural-text trajectories are flatter (less drift over $t$) and lie between high-$\theta$ and low-$\theta$ sampler trajectories in feature space. Confidence $_{80\%}$.</p>
+</div>
+
+<div class="experiment">
+<span class="tag">E · model organism</span>
+<h3>Toy transformer on synthetic generative process</h3>
+<p class="field-content">Train a small transformer on data generated by a known process with explicit latent structure (mixture of HMMs in the Xie et al. style is the obvious choice, since the ICL-as-implicit-Bayesian-inference framing was developed and proven there). Sample under various $\theta$. Observe imprint dynamics with access to ground-truth $P^\ast$, the unsmoothed natural distribution.</p>
+<div class="field">measures</div>
+<p class="field-content">Distance from $P_\phi$ to $P^\ast$ as a function of $t$ and $\theta$. The directional decomposition of the imprint, whether it falls along latent-concept axes or off them.</p>
+<div class="field">prediction</div>
+<p class="field-content">Imprint magnitude grows with $t$ as in real LMs. Imprint direction lies primarily along the inferred-concept axis, indicating the model is updating its posterior over latent concepts based on sampler-induced statistics. This would be the cleanest mechanism evidence in the project. Confidence $_{60\%}$, lower because more moving parts.</p>
+</div>
+
+<h2><span class="num">05</span> Related work</h2>
+
+<p>The phenomenon at the aggregate-entropy level is not new. The mechanism reframing as in-context Bayesian inference over sampler-induced latents, and the empirical question of whether the inference operates above the entropy level, are. The work below clusters into three threads.</p>
+
+<h3>Symptom-level treatments of the same phenomenon</h3>
+<div class="refs">
+  <div class="ref"><span class="key">Basu21</span><div class="body"><em>Mirostat: A Neural Text Decoding Algorithm that Directly Controls Perplexity.</em> Basu, Ramachandran, Keskar, Varshney. ICLR 2021. <span class="meta">The closest prior. Identifies the boredom trap (perplexity drops over generation length under low $k$ and $p$) and gives a closed-loop top-$k$ controller that holds per-token surprise at a target. Analysis under Zipfian assumption.</span></div></div>
+  <div class="ref"><span class="key">Holtzman20</span><div class="body"><em>The Curious Case of Neural Text Degeneration.</em> Holtzman, Buys, Du, Forbes, Choi. ICLR 2020. <span class="meta">Foundational degeneration paper. Proposes nucleus (top-$p$) sampling as the response. Frames repetition as a positive feedback loop driven by likelihood maximization.</span></div></div>
+  <div class="ref"><span class="key">Xu22</span><div class="body"><em>Learning to Break the Loop: Analyzing and Mitigating Repetitions for Neural Text Generation.</em> Xu et al. NeurIPS 2022. <span class="meta">Formalizes the self-reinforcement effect. Probability of repetition increases monotonically with the number of historical repetitions, and stronger initial probabilities exhibit stronger self-reinforcement.</span></div></div>
+  <div class="ref"><span class="key">Zhu23</span><div class="body"><em>Penalty Decoding.</em> Zhu et al. EMNLP 2023. <span class="meta">Treats the LM distribution as a reinforced version of itself and applies penalties to reinforced tokens.</span></div></div>
+</div>
+
+<h3>Theoretical foundations for the ICL framing</h3>
+<div class="refs">
+  <div class="ref"><span class="key">Xie22</span><div class="body"><em>An Explanation of In-context Learning as Implicit Bayesian Inference.</em> Xie, Raghunathan, Liang, Ma. ICLR 2022. <span class="meta">Proves that in-context learning emerges as Bayesian inference over a latent concept when the pretraining distribution is a mixture of HMMs. The theoretical foundation our framing builds on. Their setup is also the natural choice for the toy model organism in experiment E.</span></div></div>
+  <div class="ref"><span class="key">Wang24</span><div class="body"><em>Large Language Models Are Latent Variable Models.</em> Wang et al. <span class="meta">Empirical extension of the latent-variable view of LLMs. Useful for arguing the framing applies beyond the synthetic setting.</span></div></div>
+</div>
+
+<h3>Adjacent decoding methods</h3>
+<div class="refs">
+  <div class="ref"><span class="key">Hewitt22</span><div class="body"><em>Truncation Sampling as Language Model Desmoothing.</em> Hewitt, Manning, Liang. EMNLP Findings 2022. <span class="meta">Models LMs as a mixture of true distribution and uniform-like smoothing distribution, with truncation as desmoothing. Per-step framing, not about cross-step imprint dynamics. Proposes $\eta$-sampling.</span></div></div>
+  <div class="ref"><span class="key">Cui24</span><div class="body"><em>Adaptive Decoding via Latent Preference Optimization.</em> Cui et al. NeurIPS 2024. <span class="meta">Adds a head that picks the temperature per token or per example. Learns the right sampler given a preference signal. Does not study what the model implicitly infers about an externally-applied sampler.</span></div></div>
+  <div class="ref"><span class="key">Wang25</span><div class="body"><em>The End of Manual Decoding (AutoDeco).</em> Wang et al. arXiv 2510.26697, 2025. <span class="meta">Adds heads that predict the optimal $T$ and top-$p$ per token. Notes in passing that the model can interpret natural-language commands like "generate with low randomness," but does not study the inferred-from-prefix case.</span></div></div>
+  <div class="ref"><span class="key">Gareev24</span><div class="body"><em>Local and Global Decoding in Text Generation.</em> Gareev et al. arXiv 2410.10810. <span class="meta">Distinct distortion mechanism. Local renormalization at each step distorts the joint compared to globally-normalized truncation. About equilibrium, not about prefix-imprint dynamics over $t$.</span></div></div>
+  <div class="ref"><span class="key">Gai25</span><div class="body"><em>Differential Smoothing Mitigates Sharpening and Improves LLM Reasoning.</em> Gai, Zeng, Zhang, Raghunathan. arXiv 2511.19942, 2025. <span class="meta">Training-time analog. Formalizes a selection-and-reinforcement bias in RL fine-tuning that produces diversity collapse. Same shape, different mechanism. Worth citing as parallel.</span></div></div>
+  <div class="ref"><span class="key">Nguyen24</span><div class="body"><em>Min-p Sampling.</em> Nguyen et al. <span class="meta">Dynamic truncation tied to the top-token probability. Now standard in production decoding stacks.</span></div></div>
+</div>
+
+<h2><span class="num">06</span> Open questions</h2>
+
+<ul class="clean">
+<li>How far does the family of decoder-induced imprints extend? Sharpening is the lead instance and the most consequential. Flattening, vocabulary biases (blacklists, frequency penalties), repetition penalties, and possibly drift even under default parameters all deserve direct measurement.</li>
+<li>Is the imprint multi-dimensional or summarizable as a scalar (entropy, surprise)? Experiment B is the direct test.</li>
+<li>How does the imprint scale with model size? Larger models might be sharper inferers of latent decoder properties, in which case the imprint per token would be stronger, or larger models might have flatter base distributions and the imprint per token might be weaker. Either direction is publishable.</li>
+<li>Does the imprint live in identifiable circuits? Out of scope for the immediate experiments but a natural follow-up. Activation patching or steering on a candidate direction would be the move.</li>
+<li>Is there a decoder design that respects task-relevant imprint dimensions and overrides others? Concretely, can we build a decoder that does not inject entropy into a verbatim-repetition task while still preventing degenerate loops in open-ended generation?</li>
+<li>How does this interact with RLHF and instruction tuning? Post-training shifts the base distribution toward sharper modes already, and may interact non-trivially with decoder-induced sharpening. Differential Smoothing <span class="priors">[Gai25]</span> is the closest existing analysis.</li>
+</ul>
+
+<h2><span class="num">07</span> Status</h2>
+
+<p>Experiment A is running. Tested top-$k \in \{1, 3, 5, \infty\}$. Greedy ($k=1$) confirmed (fast sharpening, stays sharp). Low-$k$ truncation ($k=3, 5$) confirmed (one-signed sharpening drift up to 1024 tokens). Default ($k=\infty$) confirmed (drift toward flatter). The three regimes admit a unified exposure-bias-plus-ICL account, written up in the experiment A unified picture. Untested and pending: $T \gt 1$, top-$p$, vocabulary biases. Experiment B (blacklist) is set up and running. C, D, and E are designed but not yet started. The framing in section 03, generalized in sections 01 and 02, is the contribution-shaped hole that the writeup of these experiments should fill, with sharpening as the lead instance but the family of decoder-induced imprints as the topic.</p>
+
+<hr class="end">
+
+</main>
+
+<aside class="toc">
+<h4>Contents</h4>
+<ol>
+<li><a href="#">Phenomenon</a></li>
+<li><a href="#">Notation, testable claim</a></li>
+<li><a href="#">Why not Mirostat</a></li>
+<li><a href="#">Experiments</a></li>
+<li><a href="#">Related work</a></li>
+<li><a href="#">Open questions</a></li>
+<li><a href="#">Status</a></li>
+</ol>
+</aside>
+
+</div>
+</body>
+</html>

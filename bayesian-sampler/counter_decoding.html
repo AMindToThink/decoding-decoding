@@ -1,0 +1,1300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light">
+<title>Counter-decoding via streaming Bayesian inference of β</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script>
+  MathJax = {
+    tex: {
+      inlineMath: [['$', '$'], ['\\(', '\\)']],
+      displayMath: [['$$', '$$'], ['\\[', '\\]']]
+    },
+    svg: { fontCache: 'global' }
+  };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+  :root {
+    --paper: #f6f1e8;
+    --ink: #1a1814;
+    --ink-soft: #4a4438;
+    --rule: #c9bfae;
+    --accent: #a8412a;
+    --accent2: #2d5d4f;
+    --highlight: #f0e6d2;
+    --sidenote: #6b6453;
+    --code-bg: #ede5d4;
+  }
+  * { box-sizing: border-box; }
+  html {
+    scroll-behavior: smooth;
+    color-scheme: only light;
+    background-color: #f6f1e8 !important;
+  }
+  body {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 17px;
+    line-height: 1.55;
+    color: #1a1814 !important;
+    background-color: #f6f1e8 !important;
+    margin: 0;
+    padding: 0;
+    font-feature-settings: "onum", "kern";
+  }
+  input, button, select, textarea {
+    color-scheme: only light;
+  }
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 4rem 3rem 6rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 3rem;
+    background-color: #f6f1e8;
+  }
+  main { grid-column: 1; min-width: 0; background-color: #f6f1e8; }
+  aside.toc {
+    grid-column: 2;
+    position: sticky;
+    top: 2rem;
+    align-self: start;
+    font-size: 14px;
+    color: var(--sidenote);
+    border-left: 1px solid var(--rule);
+    padding-left: 1.25rem;
+  }
+  aside.toc h4 {
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 11px;
+    color: var(--ink-soft);
+    margin: 0 0 1rem 0;
+  }
+  aside.toc ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    counter-reset: toc;
+  }
+  aside.toc li {
+    counter-increment: toc;
+    margin-bottom: 0.5rem;
+    line-height: 1.35;
+  }
+  aside.toc li::before {
+    content: counter(toc, decimal-leading-zero);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--accent);
+    margin-right: 0.6rem;
+  }
+  aside.toc a {
+    color: var(--sidenote);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: all 0.2s;
+  }
+  aside.toc a:hover {
+    color: var(--ink);
+    border-bottom-color: var(--accent);
+  }
+
+  header.masthead {
+    border-top: 3px solid var(--ink);
+    border-bottom: 1px solid var(--rule);
+    padding: 1.5rem 0;
+    margin-bottom: 3rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--ink-soft);
+  }
+  header.masthead .meta-right { color: var(--accent); }
+
+  h1.title {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 3rem;
+    line-height: 1.05;
+    margin: 0 0 0.6rem 0;
+    color: var(--ink);
+    font-variation-settings: "opsz" 144, "SOFT" 50;
+    letter-spacing: -0.015em;
+  }
+  p.dek {
+    font-family: 'Fraunces', serif;
+    font-weight: 400;
+    font-style: italic;
+    font-size: 1.3rem;
+    line-height: 1.4;
+    color: var(--ink-soft);
+    margin: 0 0 3rem 0;
+    max-width: 38em;
+  }
+
+  h2 {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 1.7rem;
+    margin: 4rem 0 1rem 0;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rule);
+    line-height: 1.2;
+  }
+  h2 .num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: var(--accent);
+    margin-right: 0.8rem;
+    letter-spacing: 0.1em;
+    vertical-align: 0.3em;
+  }
+  h3 {
+    font-family: 'Fraunces', serif;
+    font-weight: 500;
+    font-size: 1.2rem;
+    margin: 2rem 0 0.6rem 0;
+    color: var(--ink);
+  }
+
+  p { margin: 0 0 1.1rem 0; max-width: 38em; }
+  p.lead {
+    font-size: 1.13rem;
+    line-height: 1.5;
+  }
+  p.lead::first-letter {
+    font-family: 'Fraunces', serif;
+    font-weight: 600;
+    font-size: 3.2rem;
+    float: left;
+    line-height: 0.85;
+    margin: 0.15em 0.08em 0 0;
+    color: var(--accent);
+  }
+
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.88em;
+    background: var(--code-bg);
+    padding: 0.1em 0.35em;
+    border-radius: 2px;
+  }
+
+  .callout {
+    background: var(--highlight);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    padding: 1.2rem 1.4rem;
+    margin: 1.8rem 0;
+    max-width: 38em;
+  }
+  .callout .label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    margin-bottom: 0.5rem;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+
+  /* Algorithm pseudocode */
+  pre.algo {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    line-height: 1.55;
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent2);
+    padding: 1.2rem 1.4rem;
+    margin: 1.5rem 0;
+    overflow-x: auto;
+    max-width: 42em;
+    color: var(--ink);
+  }
+  pre.algo .kw { color: var(--accent); font-weight: 500; }
+  pre.algo .cm { color: var(--sidenote); font-style: italic; }
+  pre.algo .lbl {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 0.7rem;
+  }
+
+  ul.clean { padding-left: 1.2rem; max-width: 38em; }
+  ul.clean li { margin-bottom: 0.5rem; }
+  ol.clean { padding-left: 1.4rem; max-width: 38em; }
+  ol.clean li { margin-bottom: 0.5rem; }
+
+  /* ===== Demo ===== */
+  .demo {
+    margin: 2rem 0 1rem 0;
+    border: 1px solid var(--rule);
+    background-color: #fbf7ee;
+    padding: 1.6rem 1.8rem 2rem;
+    max-width: none;
+  }
+  .demo .demo-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    margin-bottom: 0.4rem;
+  }
+  .demo h3 { margin-top: 0.2rem; }
+
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.4rem;
+    align-items: flex-end;
+    padding: 1rem 1.2rem;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    margin: 1rem 0 1.4rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .control-group label {
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-soft);
+    font-size: 10px;
+  }
+  .control-group .val {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 1rem;
+    color: var(--ink);
+    text-transform: none;
+  }
+  input[type="range"] {
+    width: 160px;
+    accent-color: var(--accent);
+  }
+  button {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    background: var(--ink);
+    color: var(--paper);
+    border: 1px solid var(--ink);
+    padding: 0.5rem 0.9rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  button:hover { background: var(--accent); border-color: var(--accent); }
+  button.secondary {
+    background: var(--paper);
+    color: var(--ink);
+  }
+  button.secondary:hover { background: var(--highlight); color: var(--ink); border-color: var(--ink); }
+  button:disabled {
+    background: var(--rule);
+    border-color: var(--rule);
+    color: var(--sidenote);
+    cursor: not-allowed;
+  }
+
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+  .toggle input { display: none; }
+  .toggle .switch {
+    width: 32px; height: 18px;
+    background: var(--rule);
+    border-radius: 9px;
+    position: relative;
+    transition: background 0.2s;
+  }
+  .toggle .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 14px; height: 14px;
+    background: var(--paper);
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .toggle input:checked + .switch { background: var(--accent2); }
+  .toggle input:checked + .switch::after { transform: translateX(14px); }
+
+  .charts-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1.2rem;
+  }
+  .chart-block {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    padding: 0.9rem 1rem 0.7rem;
+  }
+  .chart-block h4 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    margin: 0 0 0.2rem 0;
+    font-weight: 500;
+  }
+  .chart-block .sub {
+    font-family: 'Fraunces', serif;
+    font-style: italic;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+    margin-bottom: 0.5rem;
+    line-height: 1.3;
+  }
+  .chart-block svg {
+    width: 100%;
+    height: auto;
+    display: block;
+    background: var(--paper);
+  }
+
+  input[type="range"] {
+    background: var(--paper);
+    color: var(--ink);
+  }
+
+  .charts-row-2 {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr;
+    gap: 1rem;
+    margin-bottom: 1.2rem;
+  }
+
+  .state-readout {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    padding: 0.9rem 1rem;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    margin-bottom: 1.2rem;
+  }
+  .state-readout .item .lbl {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--ink-soft);
+    margin-bottom: 0.2rem;
+  }
+  .state-readout .item .v {
+    font-family: 'Fraunces', serif;
+    font-size: 1.4rem;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  .state-readout .item .v.accent { color: var(--accent); }
+  .state-readout .item .v.accent2 { color: var(--accent2); }
+
+  .token-strip {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    padding: 0.6rem 0.9rem;
+    margin-bottom: 0.5rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    min-height: 2.6rem;
+    color: var(--ink);
+    word-break: break-word;
+  }
+  .token-strip .lbl {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--ink-soft);
+    margin-right: 0.6rem;
+  }
+  .token {
+    display: inline-block;
+    padding: 0.05em 0.3em;
+    margin: 0 0.05em;
+    border-radius: 2px;
+  }
+  .token.A { background: #d96b4f33; }
+  .token.B { background: #d8a85033; }
+  .token.C { background: #5c8a7833; }
+  .token.D { background: #6b88a833; }
+  .token.E { background: #8a6b8833; }
+
+  .legend {
+    display: flex;
+    gap: 1.2rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--ink-soft);
+    margin-top: 0.4rem;
+    flex-wrap: wrap;
+  }
+  .legend .swatch {
+    display: inline-block;
+    width: 12px; height: 3px;
+    margin-right: 0.4rem;
+    vertical-align: middle;
+  }
+  .legend svg.line-swatch {
+    vertical-align: middle;
+    margin-right: 0.45rem;
+    overflow: visible;
+  }
+
+  .narration {
+    background: var(--highlight);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent2);
+    padding: 0.8rem 1rem;
+    margin-bottom: 1.2rem;
+    font-family: 'Source Serif 4', serif;
+    font-style: italic;
+    font-size: 0.95rem;
+    color: var(--ink);
+    line-height: 1.45;
+    min-height: 2.8em;
+  }
+  .narration .label {
+    font-family: 'JetBrains Mono', monospace;
+    font-style: normal;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--accent2);
+    margin-right: 0.5rem;
+  }
+
+  hr.end {
+    border: none;
+    border-top: 1px solid var(--rule);
+    margin: 4rem 0 2rem 0;
+    max-width: 38em;
+    position: relative;
+  }
+  hr.end::after {
+    content: "◊";
+    position: absolute;
+    top: -0.7em;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--paper);
+    padding: 0 0.8rem;
+    color: var(--accent);
+  }
+
+  @media (max-width: 1000px) {
+    .charts-row { grid-template-columns: 1fr; }
+    .charts-row-2 { grid-template-columns: 1fr; }
+    .state-readout { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 900px) {
+    .page { grid-template-columns: 1fr; padding: 2rem 1.5rem; }
+    aside.toc { display: none; }
+    h1.title { font-size: 2.1rem; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+<main>
+
+<header class="masthead">
+  <span>Method memo / companion to <em>Double sharpening</em></span>
+  <span class="meta-right">v0.1</span>
+</header>
+
+<h1 class="title">Counter-decoding via streaming Bayesian inference of β</h1>
+
+<p class="dek">If the model performs in-context Bayesian inference over its own inverse-temperature, then the imprint composes multiplicatively with the explicit decoder. Run a streaming Bayesian estimator alongside generation, divide it out, and the closed loop holds at target temperature by induction.</p>
+
+<h2 id="idea"><span class="num">01</span> The setup</h2>
+
+<p class="lead">Suppose the model performs in-context Bayesian inference about its own sampling temperature. Concretely: the model has a prior $\pi_0(\beta)$ over inverse-temperature, and at each generation step it computes a posterior over $\beta$ given the prefix and outputs logits as if the temperature were the posterior mean. So at step $t$, the model's pre-decoding logits are
+\[ \ell_t \;=\; \beta_{\text{model}}^{(t)} \cdot \ell^*_t, \]
+where $\ell^*_t$ is the natural reference logit shape at this position (whatever the model would produce if it weren't trying to match an inferred sharp/flat distribution) and $\beta_{\text{model}}^{(t)} = \mathbb{E}_{\pi(\beta \mid x_{\lt t})}[\beta]$ is the running posterior mean. The explicit decoder then applies its own scalar $\beta_{\text{dec}}$, and the actual sampling distribution is $\text{softmax}(\beta_{\text{dec}} \cdot \beta_{\text{model}}^{(t)} \cdot \ell^*_t)$.</p>
+
+<p>The two factors compose multiplicatively, exactly. Define the temperature operator $T_\beta(\ell) = \beta\ell$. Then $T_\alpha \circ T_\beta = T_{\alpha\beta}$ in logit space, and softmax is the bijection to the simplex which carries this group structure across — softmax non-linearity doesn't enter, since the per-step normalization $\beta\log Z$ shifts all logits equally and cancels. Multiplicativity is a free algebraic fact; the assumption is that the model's imprint is itself a temperature operator on some reference $\ell^*_t$.</p>
+
+<p>If we want the <em>effective</em> inverse-temperature to be $\beta_{\text{target}}$, set
+\[ \beta_{\text{dec}}^{(t)} \;=\; \beta_{\text{target}} \,/\, \beta_{\text{model}}^{(t)}. \]
+The whole framework rests on being able to estimate $\beta_{\text{model}}^{(t)}$ each step. The next section gives the algorithm.</p>
+
+<p>Three load-bearing assumptions, ranked by how worried I am about each.</p>
+
+<ol class="clean">
+  <li><strong>The model's imprint is a temperature operation</strong> — equivalently, $\ell_t = \beta_{\text{model}}^{(t)} \cdot \ell^*_t$ for some scalar $\beta_{\text{model}}^{(t)}$ and reference $\ell^*_t$. Falsifiable. For temperature decoding it is plausible by symmetry — temperature acts uniformly across tokens, so the natural latent for the model to infer is itself a scalar shape parameter. Experiment B of the parent memo found token-identity-level inference under a blacklist decoder, which is consistent with the broader pattern that the model infers along the dimensions the decoder operates on, but does not directly bear on the temperature case. Whether the imprint under temperature decoding has structure off the scalar-$\beta$ axis is empirically open. Step 1 of the plan tests this directly.</li>
+  <li><strong>The model is approximately Bayes-optimal in its inference of $\beta$, and we can match its prior.</strong> The transformer's $\beta_{\text{model}}^{(t)}$ is the posterior mean of $\beta$ under some prior $\pi_0$ given $x_{\lt t}$. We use $\log\beta \sim \mathcal{N}(\mu_0, \sigma_0^2)$ as the working assumption — a log-normal prior on $\beta$, long-tailed, parameterized so the mean is 1. Concretely $\mu_0 = -\sigma_0^2/2$ to fix the mean, with $\sigma_0$ a hyperparameter. This is a working assumption rather than something derived; if the corrector misses target by a consistent factor, $\sigma_0$ is one of the first things to retune.</li>
+  <li><strong>A reference $\ell^*_t$ is recoverable.</strong> The next section shows that under assumptions 1 and 2, this comes for free as a side product of the inference. Independent of those assumptions, $\ell^*_t$ can also be sourced from natural-text data; the section after the algorithm covers both routes.</li>
+</ol>
+
+<div class="callout">
+<div class="label">What this is not</div>
+<p>Not Mirostat. Mirostat targets aggregate per-token surprise. The Bayesian corrector targets effective inverse-temperature, which is a richer target. Crucially, it gets task-relativity for free — if the prefix legitimately calls for sharp continuation (verbatim, structured), the inferer attributes the sharpness to content rather than to a low-$T$ sampler, and refrains from over-correcting. Mirostat cannot make this distinction.</p>
+</div>
+
+<h2 id="algorithm"><span class="num">02</span> The algorithm</h2>
+
+<p>External inference proceeds by Bayes on $\beta$. Likelihood at step $t$:
+\[ P(x_t \mid \beta, \ell^*_t) \;=\; \text{softmax}(\beta\,\ell^*_t)[x_t]. \]
+Prior $\log\beta \sim \mathcal{N}(\mu_0, \sigma_0^2)$ with $\mu_0 = -\sigma_0^2/2$ (so $\mathbb{E}[\beta] = 1$). Track the posterior on $\eta = \log\beta$ as a Gaussian via streaming Laplace approximation — two scalars $(\hat\eta, J)$, where $\hat\eta$ is the running posterior mode and $J$ the running precision. State stays bounded regardless of trajectory length.</p>
+
+<p>The reference $\ell^*_t$ is bootstrapped from the model's actual logits, $\hat\ell^*_t = \ell_t / \hat\beta$. Soundness derivation below.</p>
+
+<pre class="algo"><span class="lbl">Counter-decoding · per-step (streaming Laplace)</span>
+<span class="kw">initialize</span>   η̂ ← μ_0 = −σ_0²/2     <span class="cm"># prior mode in log-β space; gives β̂_0 = exp(μ_0)</span>
+              J  ← 1/σ_0²              <span class="cm"># prior precision</span>
+                                       <span class="cm"># with σ_0 small, β̂_0 ≈ 1 and the algorithm anchors at ℓ*_0 ≈ ℓ_0 at t=0</span>
+
+<span class="kw">per-step input</span>  model logits ℓ_t ; target β_target
+
+β̂  =  exp(η̂)
+
+<span class="cm"># 1. Bootstrap reference</span>
+ℓ*_t  =  ℓ_t / β̂
+
+<span class="cm"># 2. Counter-decode and sample</span>
+β_dec = β_target / β̂
+p     = softmax( β_dec · ℓ_t )
+x_t   ~ Categorical(p)
+
+<span class="cm"># 3. Compute moments of ℓ*_t under the model's distribution at β̂</span>
+q     = softmax( β̂ · ℓ*_t )           <span class="cm"># equals softmax(ℓ_t), the model's actual P_φ</span>
+A'    = Σ_j q[j] · ℓ*_t[j]             <span class="cm"># expected reference logit</span>
+A''   = Σ_j q[j] · (ℓ*_t[j] − A')²     <span class="cm"># variance of reference logit</span>
+
+<span class="cm"># 4. Streaming Laplace update on η = log β</span>
+score = β̂ · ( ℓ*_t[x_t] − A' )         <span class="cm"># dℓ/dη at current η̂</span>
+fisher = β̂² · A''                      <span class="cm"># Fisher info from this observation</span>
+
+J  ← J + fisher
+η̂  ← η̂ + score / J                     <span class="cm"># Newton step</span>
+
+<span class="kw">output</span>  x_t , (η̂, J)
+</pre>
+
+<p>Two implementation notes. First, $q = \text{softmax}(\hat\beta \cdot \ell^*_t) = \text{softmax}(\ell_t)$ — the model's own pre-decoding distribution $P_\phi$. So step 3's moments can be computed directly from $\ell_t$ without materializing $\ell^*_t$ as a vector. Second, all state updates are 1D scalar operations; the $|V|$-dimensional structure shows up only in the moment computations at step 3, which fold into scalars before persistent state is updated.</p>
+
+<h3>Why bootstrap is sound</h3>
+
+<p>Induction on $t$. <em>Base case:</em> at $t=0$ no data has been observed, so the model's posterior is $\pi_0$ and ours is $\pi_0$ too. With the prior centered at $\beta = 1$, $\hat\beta_0 \approx 1 = \beta_{\text{model}}^{(0)}$. The model has no in-context inference to do yet, so its logits are the natural reference: $\ell_0 = \ell^*_{\text{true},0}$. Bootstrap recovers it tautologically: $\hat\ell^*_0 = \ell_0/\hat\beta_0 = \ell_0$. The corrector applies $\beta_{\text{dec},0} = \beta_{\text{target}}$, the sampling distribution is $\text{softmax}(\beta_{\text{target}} \cdot \ell^*_{\text{true},0})$, and the loop is anchored to ground truth at $t=0$.</p>
+
+<p><em>Inductive step.</em> Assume $\hat\beta_t = \beta_{\text{model}}^{(t)}$, hence $\hat\ell^*_t = \ell^*_{\text{true},t}$. Our likelihood factor is $\text{softmax}(\beta \cdot \ell^*_{\text{true},t})[x_t]$ — the same likelihood the model uses in its own posterior update, applied to the same observation $x_t$. Same prior, same likelihood, same data: same posterior. So $\hat\beta_{t+1} = \beta_{\text{model}}^{(t+1)}$. The induction propagates exact calibration forward.</p>
+
+<p>The companion <a href="walkthrough.html">walkthrough</a> works through this with explicit numbers at $t = 0, 1, 2$ for a two-token vocabulary.</p>
+
+<h3>Where the framework can break</h3>
+
+<p>Three failure modes, each with a characteristic empirical signature.</p>
+
+<ul class="clean">
+  <li><strong>Prior mismatch.</strong> Log-normal with $\sigma_0$ wrong, or the family wrong. $\hat\beta_t$ converges toward a different point than $\beta_{\text{model}}^{(t)}$, the bootstrap reference is off by a scalar, and $P_{\text{sample}}$ misses target by a consistent factor.</li>
+  <li><strong>Bayes-optimality failure.</strong> Model isn't doing Bayes-optimal inference over $\beta$ in the way we're modeling. Inductive step breaks regardless of priors. Detection: $\hat\beta$ moving but $P_\phi$ shape not tracking it as predicted.</li>
+  <li><strong>Multiplicative-imprint failure.</strong> $\ell_t \ne \beta_{\text{model}}^{(t)} \cdot \ell^*_{\text{true},t}$ exactly — token-identity-level residual structure. Bootstrap absorbs the residual into $\hat\ell^*$ silently. The corrector hits its scalar target but doesn't address the residual. Catch via SVD diagnostics in step 1, which need an external reference to test (corpus matching, not bootstrap).</li>
+</ul>
+
+<h3>Where $\ell^*_t$ comes from</h3>
+
+<p>Two answers, both useful.</p>
+
+<ul class="clean">
+  <li><strong>Bootstrap.</strong> $\ell^*_t = \ell_t / \hat\beta$, as in the algorithm. Free, no external data needed, exact under assumptions 1 and 2. Default for the production corrector.</li>
+  <li><strong>Natural-text matching.</strong> Run the model on a corpus passage analogous to the current generation context and use those logits as $\ell^*_t$. The parent memo's experiment D builds this dataset. Doesn't require Bayes-optimality. Useful as a robustness check on bootstrap — substantial divergence between bootstrap and corpus-matched references is direct evidence assumption 2 is failing.</li>
+</ul>
+
+<h2 id="plan"><span class="num">03</span> The plan</h2>
+
+<p>Run on Qwen-2.5-3B with prompts drawn from a standard text-generation distribution. WritingPrompts is the recommended choice since F0b below requires natural-text continuations of the same prompts as a corpus-matched reference. Decoder sweep $\beta_{\text{dec}} \in \{0.5, 0.7, 1.0, 1.3, 1.7, 2.0\}$ — equivalently $T \in \{2, 1.4, 1, 0.77, 0.59, 0.5\}$. $N = 100$ trajectories per condition, length $T = 200$ tokens. Prior $\sigma_0$: start at $\sigma_0 = 0.5$ (gives a moderate-tailed log-normal with $\beta$ ranging roughly over $[0.4, 2.7]$ at $\pm 2\sigma$); revisit if F0 shows a consistent miss.</p>
+
+<p>The framework has three claims plus the headline test. F0 below is the headline. Steps 1–3 are diagnostics that tell us why the corrector works or fails, conditional on F0 results.</p>
+
+<h3>Headline experiment — concentration drift</h3>
+<p>Before any of the per-claim diagnostics, the most directly legible test of the framework. Top-$k$ decoding is already known to drive concentration drift on $P_\phi$ — pre-decoding distributions get peakier with $t$, the documented boredom trap. Temperature decoding at $\beta_{\text{target}} \gt 1$ should do the same by the same mechanism: sharp output produces sharp-looking prefix produces sharp-inferred-$\beta$ produces sharper output. Symmetrically, $\beta_{\text{target}} \lt 1$ should drive concentration <em>down</em> over $t$ (the confusion trap). The framework predicts this drift is the imprint feedback loop, and the corrector breaks the loop.</p>
+
+<p><strong>Two distributions worth measuring, with different predictions.</strong></p>
+
+<ul class="clean">
+  <li><strong>The sampling distribution</strong> $P_{\text{sample}}^{(t)} = \text{softmax}(\beta_{\text{dec}}^{(t)} \cdot \ell_t)$ — what we actually draw $x_t$ from. Under perfect correction this equals $\text{softmax}(\beta_{\text{target}} \cdot \ell^*_{\text{true},t})$ at every step, since $\beta_{\text{dec}}^{(t)} \cdot \beta_{\text{model}}^{(t)} = \beta_{\text{target}}$ identically. The strongest prediction: <strong>concentration of $P_{\text{sample}}$ is invariant in $t$, at any $\beta_{\text{target}}$</strong>, in the toy with fixed $\ell^*$. In the real-LM case where $\ell^*_{\text{true},t}$ varies with content, concentration is not invariant absolutely, but the corrected arm at each $t$ matches a one-shot natural-text sampler at $\beta_{\text{target}}$ on the same prefix — there is no systematic drift in $t$.</li>
+  <li><strong>The model's pre-decoding distribution</strong> $P_\phi^{(t)} = \text{softmax}(\beta_{\text{model}}^{(t)} \cdot \ell^*_{\text{true},t})$. Even under perfect correction this is not flat: $\beta_{\text{model}}^{(t)}$ starts at the prior mean (1) and converges to $\beta_{\text{target}}$ as the model's in-context inference accumulates evidence. So $P_\phi$ traces a transient from natural-shape to target-shape over the first few tokens, then plateaus. The plateau is also a sharp prediction — the asymptote should match the natural distribution at temperature $\beta_{\text{target}}$.</li>
+</ul>
+
+<p>Uncorrected, both distributions drift in the same direction: $P_{\text{sample}} = \text{softmax}(\beta_{\text{target}} \cdot \beta_{\text{model}}^{(t)} \cdot \ell^*_{\text{true},t})$ where $\beta_{\text{model}}^{(t)}$ runs away geometrically, and $P_\phi$ inherits that drift directly.</p>
+
+<p>Measurement is direct, no machinery required: at each step $t$, compute concentration statistics on both distributions — max-probability, entropy, top-$k$ mass for a fixed $k$. Do this for an uncorrected sweep over $\beta_{\text{dec}}$ and a corrected sweep over $\beta_{\text{target}}$ at the same values, in the toy and on real LMs.</p>
+
+<p><strong>F0 — Headline plot.</strong> Two-panel layout. Top panel: $\max_x P_{\text{sample}}^{(t)}$ vs $t$, two curves per $\beta_{\text{target}}$ value (corrected solid, uncorrected dashed), faceted. The corrected curves should be flat lines in the toy and indistinguishable from a natural-baseline reference at temperature $\beta_{\text{target}}$ on real LMs. The uncorrected curves climb (for $\beta_{\text{target}} \gt 1$) or fall (for $\beta_{\text{target}} \lt 1$) without bound. Bottom panel: $\max_x P_\phi^{(t)}$ vs $t$, same layout — corrected curves transition from natural to target over the first few tokens then plateau; uncorrected curves drift continuously.</p>
+
+<p>F0 doesn't test <em>which</em> assumption the corrector is relying on — it just tests whether the corrector breaks the loop in observable concentration. The per-claim experiments below test the assumptions individually, which matters for understanding why the corrector works (or fails), but F0 is the single plot that tells you whether the framework is working. The flat-line prediction on $P_{\text{sample}}$ is particularly clean — it's hard to fake a flat line in $t$ across many $\beta_{\text{target}}$ values without the framework actually being right.</p>
+
+<p><strong>F0b — Bootstrap vs corpus-matched reference.</strong> Direct test of assumption 2 (Bayes-optimality). Run the corrector twice on each prompt: once with bootstrap reference $\ell^*_t = \ell_t / \hat\beta$ as in the algorithm, once with corpus-matched reference where $\ell^*_t$ comes from the model's logits at the analogous position of a natural-text continuation of the same prompt. Use the same prompt-source as the natural-text dataset (e.g., WritingPrompts with held-out completions) so the natural reference is well-defined. Both runs use the same prior, the same Laplace update, the same target $\beta_{\text{target}}$ — only $\ell^*_t$ differs.</p>
+
+<p>Predicted under assumption 2: the two corrected arms produce statistically indistinguishable $\hat\beta$ trajectories and statistically indistinguishable $P_{\text{sample}}$ concentrations. Plot: $\log\hat\beta_t^{\text{bootstrap}}$ vs $\log\hat\beta_t^{\text{corpus}}$ as paired curves over $t$, faceted by $\beta_{\text{target}}$. Substantial divergence between the arms is direct evidence that bootstrap's self-consistent inference isn't tracking what an external observer would conclude from the same data — which is exactly assumption-2 failure. Convergence between the arms is strong validation, since the two procedures share almost no machinery: bootstrap's correctness follows from the model being Bayes-optimal in the way we modeled, corpus's correctness follows from the corpus actually being natural.</p>
+
+<p><strong>What failure looks like on F0.</strong> Slow drift on the corrected $P_{\text{sample}}$ — same direction as uncorrected, smaller magnitude — indicates $\hat\beta$ is converging toward something that isn't $\beta_{\text{model}}$, most likely a prior mismatch (try retuning $\sigma_0$, or replace log-normal with a different family). Fast drift in the wrong direction indicates the model isn't doing what we modeled at all (Bayes-optimality failure). Oscillation or non-monotone drift indicates path-dependence the framework can't capture (assumption 1 broken in a way that scalar-$\beta$ correction can't fix). Drift at extreme $\beta_{\text{target}}$ but flat near $\beta_{\text{target}} = 1$ suggests the model has a preferred operating range and the framework holds locally but not at the tails. Each pattern points to a specific diagnostic among steps 1–3 below. F0b agreement-or-disagreement disambiguates between "framework works" and "bootstrap happens to look right but is fooling itself."</p>
+
+<h3>Step 1 — Imprint is a temperature operation</h3>
+<p>For decoder values $\beta_1, \ldots, \beta_K$ in the sweep, generate $N$ independent trajectories of length $T$ at $\beta_{\text{dec}} = \beta_k$, uncorrected. Let $\ell^{(n,k)}_t \in \mathbb{R}^{|V|}$ denote the model's pre-decoding logits at position $t$ of trajectory $n$ under $\beta_k$. At each large-enough $t$, average across trajectories,
+\[ \bar\ell_t(k) \;=\; \frac{1}{N}\sum_{n=1}^N \ell^{(n,k)}_t. \]
+Under assumption 1, the K vectors $\{\bar\ell_t(k)\}$ lie on a one-dimensional ray through some position-specific reference $\ell^*_t$, modulo the additive constant that softmax discards,
+\[ \bar\ell_t(k) \;=\; \bar\beta_t(k) \cdot \ell^*_t \;+\; c_k\,\mathbf{1}, \qquad k=1,\ldots,K. \]
+Test by SVD. Center each $\bar\ell_t(k)$ to remove the constant ($\tilde\ell_t(k) = \bar\ell_t(k) - \tfrac{1}{|V|}\mathbf{1}^\top\bar\ell_t(k) \cdot \mathbf{1}$), stack into the matrix $M_t = [\tilde\ell_t(1)\,|\,\cdots\,|\,\tilde\ell_t(K)] \in \mathbb{R}^{|V| \times K}$, decompose $M_t = U\Sigma V^\top$. Under the model $M_t$ is rank-1: $\sigma_1$ captures the temperature axis, $\sigma_{i \ge 2}$ are residual. The off-axis variance fraction
+\[ R(t) \;=\; \frac{\sum_{i \ge 2} \sigma_i^2}{\sum_i \sigma_i^2} \]
+is the failure metric. Zero under the model, positive under residual token-identity structure. The principal left-singular vector $u_1 \in \mathbb{R}^{|V|}$ recovers $\ell^*_t$ up to scale and sign; the entries $\sigma_1 v_{1k}$ recover the per-decoder $\bar\beta_t(k)$. These feed step 2 directly.</p>
+
+<p><strong>Diagnostic refinements.</strong> $R(t)$ tests one thing — does the trajectory-averaged decoder family lie on a temperature ray. Three further diagnostics cover gaps.</p>
+
+<ul class="clean">
+  <li><strong>Per-trajectory residual $R^{(k)}(t)$.</strong> Path-dependent off-axis structure that is zero-mean across trajectories cancels in the averaged test. To catch it, at each fixed $\beta_k$ stack the per-trajectory centered logits $\{\tilde\ell^{(n,k)}_t\}_{n=1}^N$ into $M_t^{(k)} \in \mathbb{R}^{|V| \times N}$, decompose, compute $R^{(k)}(t)$ analogously. Under exact per-trajectory multiplicativity each column is a scalar multiple of $\tilde\ell^*_t$ with weight $\beta_n^{(k,t)}$, so $M_t^{(k)}$ is rank-1 and $R^{(k)}(t) = 0$. Cleanest in the toy where $\ell^*_t$ can be designed to depend only on position; on real LMs, prefix-content variation across trajectories also contributes to this residual, making it a noisy upper bound.</li>
+  <li><strong>Trajectory-level $\beta$ variance $\sigma^2_\beta(k, t)$.</strong> Project each $\tilde\ell^{(n,k)}_t$ onto $\hat{\ell^*_t} = u_1$ to recover per-trajectory $\hat\beta_n^{(k,t)}$, then compute
+  \[ \sigma^2_\beta(k, t) \;=\; \mathrm{Var}_n\!\left[ \log\hat\beta_n^{(k,t)} \right]. \]
+  Distinct from off-axis residual — this measures path-dependence <em>along</em> the temperature axis. Large $\sigma^2_\beta$ means different trajectories at the same decoder converge to different inferred temperatures, which is a different failure mode and the corrector underperforms differently in each regime.</li>
+  <li><strong>Residual structure visualization.</strong> Once $R(t) \gt 0$ is established, the scalar metric is not enough — examine the residual matrix $M_t - u_1\sigma_1 v_1^\top \in \mathbb{R}^{|V| \times K}$ token-by-token. The pattern of which tokens have systematically positive or negative residuals across decoder values is the actual content of the residual. Common tokens with consistently positive residuals would be evidence the model treats high-frequency tokens specially under temperature decoding.</li>
+</ul>
+
+<p><strong>Figures for step 1.</strong></p>
+<ul class="clean">
+  <li><strong>F1.1 — $R(t)$ over $t$.</strong> One curve per $\beta_k$. Y axis: off-axis variance fraction. The headline test of multiplicativity. Want $R(t)$ near zero across $t$; growth with $t$ or with $|\log\beta_k|$ flags failure.</li>
+  <li><strong>F1.2 — Recovered $\bar\beta_t(k)$ over $t$.</strong> One curve per $\beta_k$. Y axis: $\log\bar\beta_t(k)$. The empirical drift dynamics. Same visual idiom as the toy demo's trajectory plot, now showing empirical drift across the full decoder sweep.</li>
+  <li><strong>F1.3 — Trajectory variance $\sigma^2_\beta(k, t)$ over $t$.</strong> One curve per $\beta_k$. Y axis: variance of $\log\hat\beta_n^{(k,t)}$ across trajectories. Path-dependence along the temperature axis. Predicted: grows roughly linearly in $t$, with rate proportional to $|\log\beta_k|$.</li>
+  <li><strong>F1.4 — Per-trajectory residual gap.</strong> X: $t$. Two curves — averaged $R(t)$ and per-trajectory $\overline{R^{(k)}(t)}$, on the same axes. Their gap is the zero-mean residual structure that averaging hides.</li>
+  <li><strong>F1.5 — Residual heatmap.</strong> Rows: tokens, sorted by reference probability under $\ell^*_t$ (descending). Columns: $\beta_k$ values across the sweep. Cell color: signed residual $M_t - u_1\sigma_1 v_1^\top$ at a chosen $t$. The shape of the residual, not its size.</li>
+</ul>
+
+<p><strong>Failure mode for step 1.</strong> $R(t)$ small and stable across $t$ and $\beta_k$ confirms assumption 1. $R(t)$ growing with $t$ or with $|\log\beta_k|$ means the imprint has off-axis structure; the residual heatmap (F1.5) shows what shape it takes. If common tokens row-band consistently across $\beta_k$, the model treats high-frequency tokens specially under temperature decoding — interesting, but the corrector as written can't address it.</p>
+
+<h3>Step 2 — Calibration check</h3>
+<p>Run the streaming Bayesian estimator alongside generation under each $\beta_k$. Compare its $\hat\beta_t(k)$ to the empirical $\bar\beta_t(k)$ recovered from step 1. The log-gap
+\[ \Delta_t(k) \;=\; \log\hat\beta_t(k) - \log\bar\beta_t(k) \]
+is the calibration error of the model's in-context inference relative to the Bayes-optimal inferer. Small and unbiased $\Rightarrow$ corrector hits target. Large but consistent $\Rightarrow$ fit a one-time calibration map $\tilde\beta = f(\hat\beta)$ — equivalently, the prior we picked is wrong but a fixed correction recovers the right answer. Large and inconsistent $\Rightarrow$ the framework has a problem deeper than calibration.</p>
+
+<p><strong>Figures for step 2.</strong></p>
+<ul class="clean">
+  <li><strong>F2.1 — Calibration gap $\Delta_t(k)$ over $t$.</strong> One curve per $\beta_k$. Y axis: log-gap. Mean and inter-quartile band across trajectories. Want $\Delta \to 0$. Constant nonzero offset means a calibration map exists; growing or oscillating means deeper trouble.</li>
+  <li><strong>F2.2 — Scatter of $\log\hat\beta_t$ vs $\log\bar\beta_t$.</strong> One point per $(t, k, n)$ triple, color by $|\log\beta_k|$. Identity line drawn. Tightness around identity = Bayes-optimality with matched prior. Systematic curvature = the calibration map's shape, readable from the deviation.</li>
+</ul>
+
+<p><strong>Failure mode for step 2.</strong> Constant nonzero $\Delta_t$ across $t$ at a given $\beta_k$ means $\sigma_0$ is wrong but the framework otherwise works — refit $\sigma_0$ and continue. $\Delta_t$ varying systematically with $\beta_k$ but not $t$ means the prior family (log-normal) is wrong — try different families (gamma on $\beta$, normal on $\log\beta$ with different $\sigma$ as a function of intended use). $\Delta_t$ growing with $t$ means the model isn't doing per-token Bayes-optimal updating in the way the framework models — could be slower-than-Bayes, faster-than-Bayes, or path-dependent. Step 3's $E(t)$ trajectory then carries the same signal.</p>
+
+<h3>Step 3 — Closed-loop stability</h3>
+<p>Run the corrector at fixed $\beta_{\text{target}}$. Measure
+\[ E(t) \;=\; \mathrm{median}_n \big|\log\beta_{\text{eff}}^{(n,t)} - \log\beta_{\text{target}}\big| \]
+across $t$ for both the corrected arm and an uncorrected control at the same $\beta_{\text{target}}$. Predicted: the corrected arm holds $E(t) \approx 0$ across $t$; the uncorrected arm satisfies $E(t) \approx t \cdot |\log\beta_{\text{target}}|$ from the iteration $\hat\beta^{(t+1)} \approx \beta_{\text{target}} \cdot \hat\beta^{(t)}$.</p>
+
+<p><strong>Figures for step 3.</strong></p>
+<ul class="clean">
+  <li><strong>F3.1 — $\beta_{\text{eff}}(t)$ traces, panels per $\beta_{\text{target}}$.</strong> X axis: $t$. Y axis: $\log\beta_{\text{eff}}$. Two curves per panel — corrected (solid) and uncorrected (dashed). Median across trajectories with shaded IQR band.</li>
+  <li><strong>F3.2 — $E(t)$ on log-y scale.</strong> X: $t$. Y: median absolute log-error, log scale. Two curves per $\beta_{\text{target}}$, corrected and uncorrected. Predicted: corrected stays bounded; uncorrected is a straight line with slope $|\log\beta_{\text{target}}|$.</li>
+  <li><strong>F3.3 — Posterior width over $t$.</strong> X: $t$. Y: posterior std on $\log\beta$, i.e. $1/\sqrt{J}$ from the Laplace filter. Quantifies the corrector's confidence. Useful for deciding when to start trusting the corrector at the start of generation.</li>
+</ul>
+
+<p><strong>Failure mode for step 3.</strong> Corrected $E(t)$ growing with $t$ at any $\beta_{\text{target}}$ implies the corrector isn't tracking $\beta_{\text{model}}$. If $E(t)$ grows but $R(t)$ from step 1 is small and $\Delta_t$ from step 2 is small, that's a contradiction — re-check implementation. If $E(t)$ grows together with $R(t)$, the imprint isn't multiplicative and the residual is what's biting. If $E(t)$ grows together with $\Delta_t$, the prior or Bayes-optimality assumption is wrong.</p>
+
+<h3>Out of scope for this round</h3>
+<p>Two things deferred to follow-up work, not blocking this implementation: (a) toy synthetic-generative-process validation with known $\ell^*_{\text{true}}$, useful as ground-truth check on the SVD recovery in step 1 but not necessary if the Qwen results are already informative; (b) Mirostat comparison on tasks where low-T is correct (verbatim repetition, structured-format generation, list continuation), the natural follow-up once F0 establishes the corrector works on standard generation.</p>
+
+<h2 id="demo"><span class="num">04</span> The algorithm, stepping through it</h2>
+
+<p>A toy environment to make the dynamics concrete. The model has five tokens with reference logits $\ell^* = (1.4,\, 0.6,\, 0.0,\, -0.7,\, -1.5)$, fixed across positions. The "true" model performs Bayesian inference on $\beta$ identical to our external estimator (matched-prior, exact Bayes-optimality — the toy's idealization). For visualization clarity the demo represents the posterior on a discrete grid over $\beta$; the production algorithm in section 02 uses analytical streaming Laplace updates over the continuous $\log\beta$. The dynamics are the same.</p>
+
+<p>The earlier walkthrough shows the algorithm working analytically on a two-token example. The interactive panel below extends the same dynamics to many steps and lets you flip the corrector on and off. With correction on, $\beta_{\text{eff}}$ should hold at $\beta_{\text{target}}$ regardless of $t$. With correction off, $\hat\beta$ drifts geometrically by the iteration $\hat\beta^{(t+1)} \approx \beta_{\text{target}} \cdot \hat\beta^{(t)}$ — the boredom or confusion trap, depending on whether $\beta_{\text{target}}$ is above or below 1.</p>
+
+<div class="demo">
+<div class="demo-tag">Live · interactive</div>
+<h3>Toy counter-decoder</h3>
+
+<div class="controls">
+  <div class="control-group">
+    <label>β_target</label>
+    <input type="range" id="targetSlider" min="0.4" max="2.5" step="0.05" value="1.4">
+    <span class="val" id="targetVal">1.40</span>
+  </div>
+  <div class="control-group">
+    <label>correction</label>
+    <label class="toggle" style="margin-top: 0.3rem;">
+      <input type="checkbox" id="correctToggle" checked>
+      <span class="switch"></span>
+      <span class="val" id="correctLabel" style="font-size: 0.9rem;">on</span>
+    </label>
+  </div>
+  <div class="control-group">
+    <label>step</label>
+    <div style="display:flex; gap:0.4rem;">
+      <button id="step1Btn">+1</button>
+      <button id="step10Btn" class="secondary">+10</button>
+      <button id="step50Btn" class="secondary">+50</button>
+    </div>
+  </div>
+  <div class="control-group">
+    <label>reset</label>
+    <button id="resetBtn" class="secondary">reset</button>
+  </div>
+</div>
+
+<div class="state-readout">
+  <div class="item"><div class="lbl">step t</div><div class="v" id="stepVal">0</div></div>
+  <div class="item"><div class="lbl">β̂ (estimated)</div><div class="v accent2" id="betaHatVal">—</div></div>
+  <div class="item"><div class="lbl">β_dec (chosen)</div><div class="v" id="betaDecVal">—</div></div>
+  <div class="item"><div class="lbl">β_eff (sampling)</div><div class="v accent" id="betaEffVal">—</div></div>
+</div>
+
+<div class="charts-row">
+  <div class="chart-block">
+    <h4>P*  ·  reference</h4>
+    <div class="sub">softmax(ℓ*), the no-imprint shape</div>
+    <svg id="chartRef" viewBox="0 0 240 140"></svg>
+  </div>
+  <div class="chart-block">
+    <h4>P_φ  ·  model output</h4>
+    <div class="sub">softmax(β̂ · ℓ*), with the imprint baked in</div>
+    <svg id="chartModel" viewBox="0 0 240 140"></svg>
+  </div>
+  <div class="chart-block">
+    <h4>P_sample  ·  what we sample from</h4>
+    <div class="sub">softmax(β_dec · β̂ · ℓ*), after counter-decoding</div>
+    <svg id="chartSample" viewBox="0 0 240 140"></svg>
+  </div>
+</div>
+
+<div class="charts-row-2">
+  <div class="chart-block">
+    <h4>posterior π(β)</h4>
+    <div class="sub">our running belief about the model's inferred β</div>
+    <svg id="chartPost" viewBox="0 0 360 160"></svg>
+  </div>
+  <div class="chart-block">
+    <h4>trajectory  ·  β over t</h4>
+    <div class="sub">how β̂ and β_eff evolve relative to target</div>
+    <svg id="chartTraj" viewBox="0 0 460 160"></svg>
+    <div class="legend">
+      <span><svg class="line-swatch" width="22" height="6" aria-hidden="true"><line x1="0" y1="3" x2="22" y2="3" stroke="#6b6453" stroke-width="1.3"/></svg>β_target</span>
+      <span><svg class="line-swatch" width="22" height="6" aria-hidden="true"><line x1="0" y1="3" x2="22" y2="3" stroke="#1f5e8c" stroke-width="1.9"/></svg>β̂ (estimated)</span>
+      <span><svg class="line-swatch" width="22" height="6" aria-hidden="true"><line x1="0" y1="3" x2="22" y2="3" stroke="#c44b35" stroke-width="1.8" stroke-dasharray="5,3"/></svg>β_eff (sampling)</span>
+    </div>
+  </div>
+</div>
+
+<div class="token-strip">
+  <span class="lbl">x₁..ₜ</span><span id="tokenSeq"></span>
+</div>
+
+<div class="narration">
+  <span class="label">narration</span><span id="narration">Click <em>+1</em> to take a single decoding step. The first sample is drawn under the prior — β̂ starts wherever the prior puts its mean. Watch how β̂ shifts as evidence comes in.</span>
+</div>
+
+</div>
+
+<h2 id="notes"><span class="num">05</span> What the toy doesn't show</h2>
+
+<p>The toy bakes in all three assumptions. Assumption 1 holds by construction — logits are generated as $\hat\beta \cdot \ell^*$ exactly, no off-axis residual. Assumption 2 holds by construction — the "model" in the simulation is implementing the same Bayesian inference as the external estimator, with the same prior. Assumption 3 holds by construction — $\ell^*$ is hardcoded and position-invariant, so bootstrap recovers it trivially.</p>
+
+<p>This is the cleanest possible case. It demonstrates the closed-loop dynamics — geometric drift in the uncorrected arm, induction holding the corrected arm at target — but cannot surface the failure modes that real LMs will have. To get at those, the corrector has to be tested on something where the assumptions are <em>not</em> baked in, which is what step 1 of the plan does in the toy synthetic-generative-process setting (multiplicative imprint testable, prior matching testable, $\ell^*_t$ context-dependent), and what phase 2 does on real LMs.</p>
+
+<p>What the toy does demonstrate that carries over: the geometric drift in the uncorrected case is visible within tens of tokens at moderate $\beta_{\text{target}}$; the rate of convergence of $\hat\beta$ in the corrected case depends on the prior (peaked priors converge faster but mis-target if wrong; flat priors are slower but more honest); the posterior shape gives a cheap diagnostic for when the loop is well-conditioned versus when it hasn't accumulated enough evidence. These observations transfer.</p>
+
+<hr class="end">
+
+</main>
+
+<aside class="toc">
+<h4>Contents</h4>
+<ol>
+<li><a href="#idea">Idea</a></li>
+<li><a href="#algorithm">Algorithm</a></li>
+<li><a href="#plan">Plan</a></li>
+<li><a href="#demo">Demo</a></li>
+<li><a href="#notes">Notes</a></li>
+</ol>
+</aside>
+
+</div>
+
+<script>
+// ============================================================
+// Counter-decoder toy simulation
+// ============================================================
+
+// Token vocabulary and reference logits ℓ*
+const TOKENS = ['A', 'B', 'C', 'D', 'E'];
+const REF_LOGITS = [1.4, 0.6, 0.0, -0.7, -1.5];
+
+// ===== Numerical helpers =====
+function softmax(logits, beta) {
+  const scaled = logits.map(l => beta * l);
+  const m = Math.max(...scaled);
+  const exps = scaled.map(l => Math.exp(l - m));
+  const s = exps.reduce((a,b) => a+b, 0);
+  return exps.map(e => e/s);
+}
+
+function sampleCategorical(probs) {
+  let r = Math.random();
+  for (let i = 0; i < probs.length; i++) {
+    r -= probs[i];
+    if (r <= 0) return i;
+  }
+  return probs.length - 1;
+}
+
+// ===== Conjugate exponential family inference for β =====
+//
+// Likelihood:    P(x | β, ℓ*) = exp(β ℓ*[x] - A(β))
+// Sufficient stat: τ_t = Σ ℓ*[x_i]
+// Conjugate prior: π_0(β) ∝ exp(β τ_0 - ν_0 A(β))
+// Posterior: same family with (τ_0 + τ_t, ν_0 + t)
+// MAP β̂: A'(β) = (τ_0 + τ_t) / (ν_0 + t)
+//
+// where A(β) = log Σ_j exp(β ℓ*[j])
+//       A'(β) = E_{X~softmax(β ℓ*)}[ℓ*[X]]
+//       A''(β) = Var_{X~softmax(β ℓ*)}[ℓ*[X]]
+
+function logZ(beta) {
+  // log Σ exp(β ℓ*[j])
+  const scaled = REF_LOGITS.map(l => beta * l);
+  const m = Math.max(...scaled);
+  return m + Math.log(scaled.reduce((s, l) => s + Math.exp(l - m), 0));
+}
+
+function Aprime(beta) {
+  const probs = softmax(REF_LOGITS, beta);
+  return REF_LOGITS.reduce((s, l, i) => s + l * probs[i], 0);
+}
+
+function Adoubleprime(beta) {
+  const probs = softmax(REF_LOGITS, beta);
+  const mean = REF_LOGITS.reduce((s, l, i) => s + l * probs[i], 0);
+  return REF_LOGITS.reduce((s, l, i) => s + Math.pow(l - mean, 2) * probs[i], 0);
+}
+
+// Solve A'(β) = target for β, by Newton on log β with bisection fallback.
+const BETA_MIN = 0.05, BETA_MAX = 10.0;
+function solveBetaHat(target) {
+  // Bounds: A'(0) = mean(ℓ*), A'(±∞) → max/min(ℓ*)
+  const minL = Math.min(...REF_LOGITS), maxL = Math.max(...REF_LOGITS);
+  if (target <= minL + 1e-4) return BETA_MIN;
+  if (target >= maxL - 1e-4) return BETA_MAX;
+
+  // Newton from β=1
+  let beta = 1.0;
+  for (let i = 0; i < 25; i++) {
+    const f = Aprime(beta) - target;
+    if (Math.abs(f) < 1e-8) break;
+    const fp = Math.max(Adoubleprime(beta), 1e-9);
+    let newBeta = beta - f / fp;
+    if (newBeta < BETA_MIN) newBeta = BETA_MIN;
+    if (newBeta > BETA_MAX) newBeta = BETA_MAX;
+    if (Math.abs(newBeta - beta) < 1e-10) break;
+    beta = newBeta;
+  }
+  return beta;
+}
+
+// Prior hyperparameters: place mode at β=1, with moderate strength.
+//   τ_0/ν_0 = A'(1), so τ_0 = ν_0 · A'(1)
+const NU_PRIOR = 2.0;
+const TAU_PRIOR = NU_PRIOR * Aprime(1.0);
+
+// ===== Simulation state =====
+let state = null;
+
+function reset() {
+  state = {
+    t: 0,
+    tau: 0,    // running Σ ℓ*[x_i]
+    nu: 0,     // count of observations
+    tokens: [],
+    history: { betaHat: [], betaDec: [], betaEff: [], betaTarget: [] },
+  };
+}
+
+function currentBetaHat() {
+  const tauTotal = TAU_PRIOR + state.tau;
+  const nuTotal = NU_PRIOR + state.nu;
+  return solveBetaHat(tauTotal / nuTotal);
+}
+
+function step() {
+  const target = parseFloat(document.getElementById('targetSlider').value);
+  const corrected = document.getElementById('correctToggle').checked;
+
+  // 1. Estimate β̂ from sufficient statistics
+  const betaHat = currentBetaHat();
+
+  // 2. Counter-decode
+  const betaDec = corrected ? (target / betaHat) : target;
+  const betaEff = betaDec * betaHat;
+
+  // 3. Sample from softmax(β_eff · ℓ*)
+  const samplingProbs = softmax(REF_LOGITS, betaEff);
+  const tokenIdx = sampleCategorical(samplingProbs);
+
+  // 4. Streaming sufficient-statistic update
+  state.tau += REF_LOGITS[tokenIdx];
+  state.nu += 1;
+
+  // History
+  state.tokens.push(tokenIdx);
+  state.history.betaHat.push(betaHat);
+  state.history.betaDec.push(betaDec);
+  state.history.betaEff.push(betaEff);
+  state.history.betaTarget.push(target);
+  state.t += 1;
+}
+
+// Posterior log-density: log π(β | data) ∝ β·(τ_0+τ) - (ν_0+ν)·A(β)
+function posteriorLogDensity(beta) {
+  const tauTotal = TAU_PRIOR + state.tau;
+  const nuTotal = NU_PRIOR + state.nu;
+  return beta * tauTotal - nuTotal * logZ(beta);
+}
+
+// ============================================================
+// Rendering
+// ============================================================
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const ACCENT = '#a8412a';
+const ACCENT2 = '#2d5d4f';
+const INK = '#1a1814';
+const INK_SOFT = '#4a4438';
+const RULE = '#c9bfae';
+const PAPER = '#f6f1e8';
+
+// Trajectory chart colors — chosen for max separation
+const COLOR_BETA_TARGET = '#6b6453';   // muted gray-brown
+const COLOR_BETA_HAT    = '#1f5e8c';   // deep blue
+const COLOR_BETA_EFF    = '#c44b35';   // vivid red-orange
+
+// Token bar colors (matching .token .A/.B/...)
+const TOKEN_COLORS = ['#d96b4f', '#d8a850', '#5c8a78', '#6b88a8', '#8a6b88'];
+
+function clear(svg) { while (svg.firstChild) svg.removeChild(svg.firstChild); }
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function drawDistribution(svgId, probs, highlightIdx) {
+  const svg = document.getElementById(svgId);
+  clear(svg);
+  const W = 240, H = 140;
+  const padL = 20, padR = 8, padT = 8, padB = 22;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = probs.length;
+  const barW = plotW / n * 0.7;
+  const gap = plotW / n * 0.3;
+
+  // y-axis: gridlines at 0.25, 0.5, 0.75, 1.0
+  for (const v of [0.25, 0.5, 0.75, 1.0]) {
+    const y = padT + plotH * (1 - v);
+    el('line', {x1: padL, y1: y, x2: W - padR, y2: y, stroke: RULE, 'stroke-width': 0.5, 'stroke-dasharray': '2,2'}, svg);
+  }
+
+  for (let i = 0; i < n; i++) {
+    const x = padL + i * (plotW / n) + gap / 2;
+    const h = probs[i] * plotH;
+    const y = padT + plotH - h;
+    const fill = TOKEN_COLORS[i] + (highlightIdx === i ? 'ff' : '99');
+    el('rect', {x, y, width: barW, height: h, fill, stroke: highlightIdx === i ? INK : 'none', 'stroke-width': 1.2}, svg);
+    // Probability label on top
+    const lblText = probs[i].toFixed(2);
+    if (probs[i] > 0.04) {
+      const t = el('text', {x: x + barW/2, y: y - 3, 'text-anchor': 'middle', 'font-family': 'JetBrains Mono, monospace', 'font-size': 8, fill: INK_SOFT}, svg);
+      t.textContent = lblText;
+    }
+    // Token label below
+    const tk = el('text', {x: x + barW/2, y: H - 8, 'text-anchor': 'middle', 'font-family': 'Fraunces, serif', 'font-style': 'italic', 'font-size': 11, fill: INK}, svg);
+    tk.textContent = TOKENS[i];
+  }
+}
+
+function drawPosterior(svgId, betaHat) {
+  const svg = document.getElementById(svgId);
+  clear(svg);
+  const W = 360, H = 160;
+  const padL = 30, padR = 12, padT = 12, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+
+  // Evaluate posterior on a fine log-spaced grid for plotting
+  const N = 240;
+  const logLo = Math.log(0.2), logHi = Math.log(5.0);
+  const grid = [];
+  for (let i = 0; i < N; i++) grid.push(Math.exp(logLo + (logHi - logLo) * i / (N - 1)));
+  const logVals = grid.map(b => posteriorLogDensity(b));
+  const maxLog = Math.max(...logVals);
+  const dens = logVals.map(l => Math.exp(l - maxLog));  // peak normalized to 1
+  const maxDens = Math.max(...dens);
+
+  // Mapping
+  const xOf = b => padL + (Math.log(b) - logLo) / (logHi - logLo) * plotW;
+  const yOf = d => padT + plotH * (1 - d / maxDens);
+
+  // Axis lines
+  el('line', {x1: padL, y1: padT, x2: padL, y2: padT + plotH, stroke: INK_SOFT, 'stroke-width': 1}, svg);
+  el('line', {x1: padL, y1: padT + plotH, x2: W - padR, y2: padT + plotH, stroke: INK_SOFT, 'stroke-width': 1}, svg);
+
+  // Filled area under posterior curve
+  let pathFill = `M ${xOf(grid[0])} ${padT + plotH} `;
+  for (let i = 0; i < N; i++) pathFill += `L ${xOf(grid[i])} ${yOf(dens[i])} `;
+  pathFill += `L ${xOf(grid[N-1])} ${padT + plotH} Z`;
+  el('path', {d: pathFill, fill: COLOR_BETA_HAT, 'fill-opacity': 0.18}, svg);
+
+  // Posterior outline curve
+  let pathLine = `M ${xOf(grid[0])} ${yOf(dens[0])} `;
+  for (let i = 1; i < N; i++) pathLine += `L ${xOf(grid[i])} ${yOf(dens[i])} `;
+  el('path', {d: pathLine, stroke: COLOR_BETA_HAT, 'stroke-width': 1.6, fill: 'none'}, svg);
+
+  // β=1 reference line
+  const x1 = xOf(1.0);
+  el('line', {x1, y1: padT, x2: x1, y2: padT + plotH, stroke: INK_SOFT, 'stroke-width': 1, 'stroke-dasharray': '3,3'}, svg);
+  const tBase = el('text', {x: x1, y: padT - 3, 'text-anchor': 'middle', 'font-family': 'JetBrains Mono, monospace', 'font-size': 9, fill: INK_SOFT}, svg);
+  tBase.textContent = 'β=1';
+
+  // β̂ marker — same color as in trajectory plot
+  const xHat = xOf(betaHat);
+  el('line', {x1: xHat, y1: padT, x2: xHat, y2: padT + plotH, stroke: COLOR_BETA_HAT, 'stroke-width': 2.0}, svg);
+  const tHat = el('text', {x: xHat, y: padT + 9, 'text-anchor': 'middle', 'font-family': 'JetBrains Mono, monospace', 'font-size': 9, fill: COLOR_BETA_HAT, 'font-weight': 'bold'}, svg);
+  tHat.textContent = 'β̂=' + betaHat.toFixed(2);
+
+  // x-axis ticks
+  const ticks = [0.25, 0.5, 1.0, 2.0, 4.0];
+  for (const b of ticks) {
+    if (b > Math.exp(logLo) && b < Math.exp(logHi)) {
+      const x = xOf(b);
+      el('line', {x1: x, y1: padT + plotH, x2: x, y2: padT + plotH + 3, stroke: INK_SOFT, 'stroke-width': 1}, svg);
+      const t = el('text', {x, y: H - 12, 'text-anchor': 'middle', 'font-family': 'JetBrains Mono, monospace', 'font-size': 8.5, fill: INK_SOFT}, svg);
+      t.textContent = b.toString();
+    }
+  }
+  const xlbl = el('text', {x: W/2, y: H - 2, 'text-anchor': 'middle', 'font-family': 'Fraunces, serif', 'font-style': 'italic', 'font-size': 10, fill: INK_SOFT}, svg);
+  xlbl.textContent = 'β';
+}
+
+function drawTrajectory(svgId) {
+  const svg = document.getElementById(svgId);
+  clear(svg);
+  const W = 460, H = 160;
+  const padL = 32, padR = 10, padT = 12, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+
+  const target = parseFloat(document.getElementById('targetSlider').value);
+  const T = state.history.betaHat.length;
+  const tMax = Math.max(50, T);
+
+  // y-range — log-scaled in β
+  // Find range from data
+  const allVals = [target].concat(state.history.betaHat, state.history.betaEff);
+  const yLo = Math.min(0.3, ...allVals) * 0.9;
+  const yHi = Math.max(3.0, ...allVals) * 1.1;
+  const yLogLo = Math.log(yLo), yLogHi = Math.log(yHi);
+
+  function xOf(t) { return padL + (t / tMax) * plotW; }
+  function yOf(b) {
+    const f = (Math.log(b) - yLogLo) / (yLogHi - yLogLo);
+    return padT + plotH * (1 - f);
+  }
+
+  // Axes
+  el('line', {x1: padL, y1: padT, x2: padL, y2: padT + plotH, stroke: INK_SOFT, 'stroke-width': 1}, svg);
+  el('line', {x1: padL, y1: padT + plotH, x2: W - padR, y2: padT + plotH, stroke: INK_SOFT, 'stroke-width': 1}, svg);
+
+  // Gridlines at β = 0.5, 1, 2
+  for (const b of [0.5, 1.0, 2.0]) {
+    if (b > yLo && b < yHi) {
+      const y = yOf(b);
+      el('line', {x1: padL, y1: y, x2: W - padR, y2: y, stroke: RULE, 'stroke-width': 0.5, 'stroke-dasharray': '2,2'}, svg);
+      const t = el('text', {x: padL - 5, y: y + 3, 'text-anchor': 'end', 'font-family': 'JetBrains Mono, monospace', 'font-size': 8.5, fill: INK_SOFT}, svg);
+      t.textContent = b.toFixed(1);
+    }
+  }
+
+  // Target line
+  const yT = yOf(target);
+  el('line', {x1: padL, y1: yT, x2: W - padR, y2: yT, stroke: COLOR_BETA_TARGET, 'stroke-width': 1.3}, svg);
+  const tT = el('text', {x: W - padR - 4, y: yT - 3, 'text-anchor': 'end', 'font-family': 'JetBrains Mono, monospace', 'font-size': 9, fill: COLOR_BETA_TARGET}, svg);
+  tT.textContent = 'target=' + target.toFixed(2);
+
+  if (T > 0) {
+    // β̂ line — solid, deep blue
+    let dHat = '';
+    state.history.betaHat.forEach((b, i) => {
+      dHat += (i === 0 ? 'M' : 'L') + xOf(i+1) + ',' + yOf(b);
+    });
+    el('path', {d: dHat, stroke: COLOR_BETA_HAT, 'stroke-width': 1.9, fill: 'none'}, svg);
+
+    // β_eff line — dashed, vivid red-orange
+    let dEff = '';
+    state.history.betaEff.forEach((b, i) => {
+      dEff += (i === 0 ? 'M' : 'L') + xOf(i+1) + ',' + yOf(b);
+    });
+    el('path', {d: dEff, stroke: COLOR_BETA_EFF, 'stroke-width': 1.8, fill: 'none', 'stroke-dasharray': '5,3'}, svg);
+
+    // Most recent point markers
+    const last = T - 1;
+    el('circle', {cx: xOf(T), cy: yOf(state.history.betaHat[last]), r: 3.5, fill: COLOR_BETA_HAT}, svg);
+    el('circle', {cx: xOf(T), cy: yOf(state.history.betaEff[last]), r: 3, fill: COLOR_BETA_EFF}, svg);
+  }
+
+  // x-axis tick marks
+  for (let tx of [0, Math.floor(tMax/4), Math.floor(tMax/2), Math.floor(3*tMax/4), tMax]) {
+    const x = xOf(tx);
+    el('line', {x1: x, y1: padT + plotH, x2: x, y2: padT + plotH + 3, stroke: INK_SOFT, 'stroke-width': 1}, svg);
+    const t = el('text', {x, y: H - 12, 'text-anchor': 'middle', 'font-family': 'JetBrains Mono, monospace', 'font-size': 8.5, fill: INK_SOFT}, svg);
+    t.textContent = tx;
+  }
+  const xlbl = el('text', {x: W/2, y: H - 2, 'text-anchor': 'middle', 'font-family': 'Fraunces, serif', 'font-style': 'italic', 'font-size': 10, fill: INK_SOFT}, svg);
+  xlbl.textContent = 't';
+}
+
+function renderTokens() {
+  const seq = document.getElementById('tokenSeq');
+  seq.innerHTML = state.tokens.map(idx => {
+    const t = TOKENS[idx];
+    return `<span class="token ${t}">${t}</span>`;
+  }).join('');
+}
+
+function makeNarration() {
+  const target = parseFloat(document.getElementById('targetSlider').value);
+  const corrected = document.getElementById('correctToggle').checked;
+  const t = state.t;
+
+  if (t === 0) {
+    return `Click <em>+1</em> to take a single decoding step. The first sample is drawn under the prior — β̂ starts wherever the prior puts its mean.`;
+  }
+
+  const betaHat = currentBetaHat();
+  const lastEff = state.history.betaEff[t-1];
+  const drift = lastEff / target;
+
+  if (corrected) {
+    const gap = Math.abs(betaHat - target) / target;
+    if (gap < 0.05 && t > 5) {
+      return `Posterior has converged on β̂ ≈ ${betaHat.toFixed(2)}, very close to β_target = ${target.toFixed(2)}. The corrector returns β_dec ≈ ${(target/betaHat).toFixed(2)} and the loop is near its self-consistent fixed point. Effective β stays at target.`;
+    }
+    return `With correction on, β̂ is moving toward β_target = ${target.toFixed(2)}. Currently β̂ = ${betaHat.toFixed(2)}, β_dec = ${(target/betaHat).toFixed(2)}. The Bayesian estimator updates from each sampled token, and the corrector adjusts to compensate.`;
+  } else {
+    if (Math.abs(target - 1.0) < 0.05) {
+      return `β_target = ${target.toFixed(2)} is near 1, the no-drift fixed point. β̂ = ${betaHat.toFixed(2)} should stay near 1 regardless of correction.`;
+    }
+    if (drift > 1.3) {
+      return `Without correction, the loop is drifting. Effective β = ${lastEff.toFixed(2)} is well above target ${target.toFixed(2)} — sharper output produces sharper-looking prefix produces sharper inference, geometrically. This is the boredom trap.`;
+    }
+    if (drift < 0.77) {
+      return `Without correction, the loop is drifting. Effective β = ${lastEff.toFixed(2)} is well below target ${target.toFixed(2)} — flatter output produces flatter-looking prefix produces flatter inference, geometrically. This is the confusion trap.`;
+    }
+    return `Without correction, β_dec = β_target = ${target.toFixed(2)} fixed. Effective β = β_dec · β̂ = ${lastEff.toFixed(2)}. Drift is happening, will be more visible after more steps.`;
+  }
+}
+
+function renderAll(highlightIdx = null) {
+  const target = parseFloat(document.getElementById('targetSlider').value);
+  const corrected = document.getElementById('correctToggle').checked;
+
+  const betaHat = currentBetaHat();
+  const betaDec = corrected ? (target / betaHat) : target;
+  const betaEff = betaDec * betaHat;
+
+  // Distributions
+  drawDistribution('chartRef', softmax(REF_LOGITS, 1.0), highlightIdx);
+  drawDistribution('chartModel', softmax(REF_LOGITS, betaHat), highlightIdx);
+  drawDistribution('chartSample', softmax(REF_LOGITS, betaEff), highlightIdx);
+
+  // Posterior
+  drawPosterior('chartPost', betaHat);
+
+  // Trajectory
+  drawTrajectory('chartTraj');
+
+  // Tokens
+  renderTokens();
+
+  // State readout
+  document.getElementById('stepVal').textContent = state.t;
+  document.getElementById('betaHatVal').textContent = betaHat.toFixed(3);
+  document.getElementById('betaDecVal').textContent = betaDec.toFixed(3);
+  document.getElementById('betaEffVal').textContent = betaEff.toFixed(3);
+
+  // Narration
+  document.getElementById('narration').innerHTML = makeNarration();
+}
+
+// ============================================================
+// Wiring
+// ============================================================
+
+function wire() {
+  const slider = document.getElementById('targetSlider');
+  const targetVal = document.getElementById('targetVal');
+  slider.addEventListener('input', () => {
+    targetVal.textContent = parseFloat(slider.value).toFixed(2);
+    renderAll();
+  });
+
+  const toggle = document.getElementById('correctToggle');
+  const correctLabel = document.getElementById('correctLabel');
+  toggle.addEventListener('change', () => {
+    correctLabel.textContent = toggle.checked ? 'on' : 'off';
+    renderAll();
+  });
+
+  document.getElementById('step1Btn').addEventListener('click', () => {
+    step();
+    const last = state.tokens[state.tokens.length - 1];
+    renderAll(last);
+  });
+
+  document.getElementById('step10Btn').addEventListener('click', () => {
+    for (let i = 0; i < 10; i++) step();
+    renderAll();
+  });
+
+  document.getElementById('step50Btn').addEventListener('click', () => {
+    for (let i = 0; i < 50; i++) step();
+    renderAll();
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    reset();
+    renderAll();
+  });
+}
+
+// Init
+reset();
+wire();
+renderAll();
+</script>
+
+</body>
+</html>
