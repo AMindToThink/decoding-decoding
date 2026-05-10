@@ -21,6 +21,8 @@ data/counter_decode_extreme/
 data/counter_decode_tight_prior/
 data/counter_decode_priors/
 data/counter_decode_fuzzy/
+data/counter_decode_tight_prior/
+data/counter_decode_entropy_stability/
 results/
 
 # Editor-local Claude config / scratch
