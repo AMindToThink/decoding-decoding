@@ -241,14 +241,24 @@ def fig_dropoff(per_rank: list[dict], out_path: Path) -> None:
         d_pt, d_lo, d_hi = r["late_minus_early_within_treatment"]
         ax.errorbar([d_pt], [y], xerr=[[d_pt - d_lo], [d_hi - d_pt]],
                     fmt="o", color="C0", capsize=4, lw=1.4)
-        ax.text(d_pt, y + 0.18, f"{d_pt:+.5f} [{d_lo:+.5f}, {d_hi:+.5f}]",
-                ha="center", fontsize=8)
+        # Place the value label below the marker via pixel-offset annotation, so
+        # it stays clear of the title on the topmost row regardless of axis range.
+        ax.annotate(
+            f"{d_pt:+.5f} [{d_lo:+.5f}, {d_hi:+.5f}]",
+            xy=(d_pt, y),
+            xytext=(0, -12),
+            textcoords="offset points",
+            ha="center",
+            va="top",
+            fontsize=8,
+        )
         labels.append(
             f"rank {r['banned_rank']}: {r['decoded']!r} "
             f"(baseline freq {r['baseline_frequency']:.3f})"
         )
     ax.axvline(0, color="black", lw=0.8)
     ax.set_yticks(ys)
+    ax.set_ylim(ys.min() - 0.6, ys.max() + 0.4)
     ax.set_yticklabels(labels)
     ax.set_xlabel("late − early p_banned (within blacklist treatment)")
     ax.set_title("Δ p_banned: does the model learn its own ban?")
