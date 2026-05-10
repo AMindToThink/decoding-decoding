@@ -16,6 +16,7 @@ data/sparse_logits/
 data/config.json
 data/logs/
 data/counter_decode/
+data/counter_decode_sigma_sweep/
 results/
 
 # Editor-local Claude config / scratch
