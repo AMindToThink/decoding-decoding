@@ -133,6 +133,51 @@ def test_corrected_arm_has_beta_dec_times_beta_hat_eq_target(small_model) -> Non
     np.testing.assert_allclose(eff, 1.7, atol=1e-5)
 
 
+def test_correction_exponent_zero_reduces_to_uncorrected(small_model) -> None:
+    """p=0 ⇒ β_dec_t = β_target (full uncorrected behavior on the corrected arm)."""
+    model, tok = small_model
+    res = _generate_batch(
+        model=model,
+        tokenizer=tok,
+        prompts=["hello world"],
+        beta_target_per_traj=torch.tensor([1.7], dtype=torch.float32, device="cuda"),
+        corrected_per_traj=torch.tensor([True], dtype=torch.bool, device="cuda"),
+        sigma_0_per_traj=torch.tensor([0.5], dtype=torch.float32, device="cuda"),
+        seeds_per_traj=[42],
+        max_tokens=10,
+        top_n=10,
+        sparse_positions=None,
+        save_sparse_for_mask=torch.tensor([False], dtype=torch.bool, device="cuda"),
+        device="cuda",
+        correction_exponent=0.0,
+    )
+    # With p=0, the corrector divides by β̂^0 = 1, so β_dec_t = β_target.
+    np.testing.assert_allclose(res.beta_dec[0], 1.7, atol=1e-6)
+
+
+def test_correction_exponent_half_partial_correction(small_model) -> None:
+    """p=0.5 ⇒ β_dec_t · β̂_pre_t^0.5 = β_target."""
+    model, tok = small_model
+    res = _generate_batch(
+        model=model,
+        tokenizer=tok,
+        prompts=["hello world"],
+        beta_target_per_traj=torch.tensor([1.7], dtype=torch.float32, device="cuda"),
+        corrected_per_traj=torch.tensor([True], dtype=torch.bool, device="cuda"),
+        sigma_0_per_traj=torch.tensor([0.5], dtype=torch.float32, device="cuda"),
+        seeds_per_traj=[42],
+        max_tokens=10,
+        top_n=10,
+        sparse_positions=None,
+        save_sparse_for_mask=torch.tensor([False], dtype=torch.bool, device="cuda"),
+        device="cuda",
+        correction_exponent=0.5,
+    )
+    # Identity: β_dec_t · β̂_pre_t^p = β_target
+    eff = res.beta_dec[0] * (res.beta_hat_pre[0] ** 0.5)
+    np.testing.assert_allclose(eff, 1.7, atol=1e-5)
+
+
 def test_laplace_state_evolution_matches_offline(small_model) -> None:
     """Run the harness with a known prompt and seed, then re-run the
     Laplace update offline given the same per-step (logits topN, sampled token).

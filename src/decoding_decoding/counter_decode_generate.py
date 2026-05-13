@@ -245,6 +245,7 @@ def _generate_batch(
     prior_kwargs: dict | None = None,
     evidence_weight: float = 1.0,
     memory_decay: float = 1.0,
+    correction_exponent: float = 1.0,
 ) -> GenerationResult:
     """Run `len(prompts)` trajectories in parallel through `max_tokens` steps.
 
@@ -416,9 +417,17 @@ def _generate_batch(
         else:
             raise ValueError(f"unknown prior_kind: {prior_kind}")
 
-        # β_dec_t = β_target/β̂_t for corrected arm; β_target for uncorrected.
+        # β_dec_t for corrected arm: β_target / β̂_t^p
+        #   p = 1: full correction (cancel the imprint fully)
+        #   p = 0: no correction (β_target alone — equivalent to the uncorrected arm)
+        #   p ∈ (0, 1): partial correction — assume the LLM's belief is only
+        #              partially up-to-date with what β̂_t says.
+        # Uncorrected arm uses β_target unchanged.
+        beta_hat_corrected = beta_hat_now ** correction_exponent
         beta_dec_t = torch.where(
-            corrected_per_traj, beta_target_per_traj / beta_hat_now, beta_target_per_traj
+            corrected_per_traj,
+            beta_target_per_traj / beta_hat_corrected,
+            beta_target_per_traj,
         )
 
         # Summary stats on P_φ (full vocab) at this step.
@@ -647,6 +656,7 @@ def run_counter_decode_experiment(
     prior_kwargs: dict | None = None,
     evidence_weight: float = 1.0,
     memory_decay: float = 1.0,
+    correction_exponent: float = 1.0,
 ) -> None:
     """Generate counter-decoding trajectories for the F0 sweep.
 
@@ -731,6 +741,7 @@ def run_counter_decode_experiment(
             prior_kwargs=prior_kwargs,
             evidence_weight=evidence_weight,
             memory_decay=memory_decay,
+            correction_exponent=correction_exponent,
         )
 
         for b, spec in enumerate(batch_specs):
@@ -753,6 +764,7 @@ def run_counter_decode_experiment(
                 "prior_kind": str(prior_kind),
                 "evidence_weight": float(evidence_weight),
                 "memory_decay": float(memory_decay),
+                "correction_exponent": float(correction_exponent),
             }
             new_rows.append(
                 {
@@ -792,5 +804,6 @@ def run_counter_decode_experiment(
         prior_kwargs=prior_kwargs or {},
         evidence_weight=float(evidence_weight),
         memory_decay=float(memory_decay),
+        correction_exponent=float(correction_exponent),
     )
     print(f"[counter-decode] wrote {len(new_rows)} trajectories to {out_dir}")
