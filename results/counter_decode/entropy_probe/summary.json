@@ -1,0 +1,60 @@
+{
+  "config": {
+    "n_prompts": 32,
+    "n_steps": 150,
+    "warmup_tokens": 10,
+    "beta_dec_values": [
+      0.5,
+      1.0,
+      2.0
+    ],
+    "late_window_start": 80,
+    "model": "Qwen/Qwen2.5-3B"
+  },
+  "by_beta_dec": {
+    "0.5": {
+      "late_entropy_mean_over_prompts": 9.216079711914062,
+      "late_entropy_median_over_prompts": 9.261362075805664,
+      "late_entropy_se_over_prompts": 0.051697830145644746
+    },
+    "1.0": {
+      "late_entropy_mean_over_prompts": 2.1684327125549316,
+      "late_entropy_median_over_prompts": 2.537381172180176,
+      "late_entropy_se_over_prompts": 0.1863259278371744
+    },
+    "2.0": {
+      "late_entropy_mean_over_prompts": 1.1715726852416992,
+      "late_entropy_median_over_prompts": 1.1577224731445312,
+      "late_entropy_se_over_prompts": 0.10929120360784186
+    }
+  },
+  "paired_diffs": {
+    "H_betadec_0.5_minus_2.0": {
+      "n_prompts": 32,
+      "mean": 8.044506072998047,
+      "median": 8.024423599243164,
+      "se": 0.11539369848729485,
+      "t_stat": 69.71356201171875,
+      "p_value": 1.214851313658571e-35,
+      "n_positive": 32
+    },
+    "H_betadec_0.5_minus_1.0": {
+      "n_prompts": 32,
+      "mean": 7.047646522521973,
+      "median": 6.748915672302246,
+      "se": 0.1931677732699176,
+      "t_stat": 36.484588623046875,
+      "p_value": 4.933925909472952e-27,
+      "n_positive": 32
+    },
+    "H_betadec_1.0_minus_2.0": {
+      "n_prompts": 32,
+      "mean": 0.9968599081039429,
+      "median": 1.2108001708984375,
+      "se": 0.15578189598708692,
+      "t_stat": 6.399074077606201,
+      "p_value": 3.9625470549253805e-07,
+      "n_positive": 27
+    }
+  }
+}
