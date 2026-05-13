@@ -168,45 +168,76 @@ the "decoder-belief" framing.  If model-belief-about-$\beta$ were a fast
 posterior update on recent sampled tokens, switching the sampler should be
 visible within a handful of tokens.  It is not.
 
-\section{What survives}
+\section{What this does \emph{not} say}
 
-A weak form of the framing remains testable and may still be true, but is
-not established by this experiment:
+The project's broader claim --- that the model forms beliefs about its
+own decoder --- is \emph{not} falsified by this experiment.  Prior work in
+this repo gives direct positive evidence:
 
 \begin{itemize}
-\item At $\beta_{\mathrm{dec}}=2.0$ self-generation, late-window
-$H \approx 1.17$ nats --- \emph{lower} than the model's entropy on real
-WikiText ($1.98$ nats from \texttt{natural\_text/macros.tex}).  This
-$\approx 0.8$-nat gap is consistent with the model sharpening below what
-the natural content alone would justify, when its prefix matches the
-$\beta=2$ regime.  But it is also consistent with $\beta=2$ generation
-producing especially predictable content (top-1 sampling produces
-high-frequency tokens), so this gap is suggestive, not decisive.
-\item The earlier natural-text experiment found a small calibration offset
-on real creative writing ($\Delta\log\hat\beta \approx -0.24$, $t = -3.8$).
-That offset, on real human text, is a much weaker but cleaner signal than
-the Exp C numbers and is the surviving load-bearing positive evidence for
-the project's framing.
+\item \textbf{Blacklist self-prediction}
+(\texttt{results/blacklist\_summary.md}, run 2026-05-10): when token
+ranks 1--5 are banned at sampling, the model's softmax probability on the
+banned token drops between early and late positions, with cluster-bootstrap
+CIs that do not cross zero. The rank-1 ban (` the') shows
+$\Delta p_{\mathrm{late}-\mathrm{early}} = -0.018$ and a paired late
+treatment-vs-control difference of $-0.016$ (CI $[-0.019, -0.013]$). The
+model learns its own blacklist from the absent-token signature.
+\item \textbf{Top-$K$ self-prediction}
+(\texttt{results/summary\_L2048.md}, run 2026-05-09): under top-$k$
+sampling, the cliff at rank $K$ in the model's predicted-rank distribution
+exceeds the corresponding cliff under unrestricted sampling.  Treatment
+minus control at rank $K$ is $+0.475$ for $k=3$ and $+0.170$ for $k=5$
+(CIs tight, all clear of zero).  Within-treatment concentration grows
+between early and late positions for $k=1, 3, 5$ and \emph{shrinks} for
+$k=\infty$: this is not generic drift.
 \end{itemize}
+
+Together with the earlier natural-text WP offset
+($\Delta\log\hat\beta \approx -0.24$, $t = -3.8$ on real creative writing,
+\texttt{natural\_text/findings.pdf}), these say the model does adjust its
+predictions in response to which tokens were sampled in its context.
+
+\section{What this experiment \emph{does} say}
+
+Exp C tested a specific strong instantiation of decoder-belief: the
+model's \emph{pre-decoding entropy} as a fast posterior readout that snaps
+to the new sampler $\beta$ within a few dozen tokens of mid-generation
+sampler change.  That specific form fails.  The swap-prefix control shows
+the model does not pull its entropy back to the $\beta=1$ baseline over
+50 tokens of new evidence under a different sampler.
+
+So the belief-update mechanism is not a fast posterior read off
+per-token entropy.  It plausibly operates on slower, more aggregate
+features --- rank statistics, support shape, blacklist signatures ---
+exactly the signals that the blacklist and top-$k$ experiments isolate.
+
+The remaining ambiguity in Exp C: the 8-nat raw effect is a mix of
+genuine decoder-belief signal (consistent with blacklist/top-$k$ findings)
+and garbage-in/garbage-out off-distribution drift from $\beta=0.5$
+sampling.  The two cannot be separated cleanly in this experimental
+design because $\beta=0.5$ decoheres the prefix faster than any belief
+update could compensate.
 
 \section{Bottom line}
 
 \begin{itemize}
 \item The 8-nat entropy spread between $\beta_{\mathrm{dec}}=0.5$ and
-$\beta_{\mathrm{dec}}=2.0$ self-generation is mostly the model
-\emph{losing coherence} as its own off-distribution sampling decoheres the
-context.  It is not a posterior on $\beta_{\mathrm{dec}}$.
-\item The swap-prefix control confirms this: switching the sampler from
-$\beta=0.5$ to $\beta=1.0$ does not pull $H$ back to the $\beta=1.0$
-baseline over 50 tokens.  A model with a fast posterior on its decoder
-would recover.
-\item The project's framing must scope down: the model's distribution does
-not aggressively update on the apparent decoder of its own generated
-prefix at the timescales tested here.  Smaller signals --- e.g.\ the
-WritingPrompts/natural offset from the natural\_text experiment, or the
-$\sim 0.8$-nat sharpening below WikiText at $\beta=2.0$ --- are the
-remaining candidates for clean "decoder-belief" evidence and need a
-different experimental design to isolate.
+$\beta_{\mathrm{dec}}=2.0$ self-generation is a mix of (i) real
+decoder-belief signal already established by the blacklist and top-$k$
+experiments and (ii) garbage-in/garbage-out off-distribution drift.  This
+experiment cannot separate them.
+\item The swap-prefix control rules out the specific strong instantiation
+in which pre-decoding entropy is a fast posterior readout that snaps to
+the new sampler $\beta$ within $\sim 50$ tokens.
+\item The broader framing --- that the model forms beliefs about its
+decoder by conditioning on its context --- remains supported by the
+blacklist and top-$k$ experiments.  Exp C constrains the form of that
+belief update rather than refuting its existence.
+\item A clean follow-up isolating decoder-belief from content quality
+would condition on \emph{natural} text of varying entropy (rather than
+self-generated extreme-$\beta$ samples) and ask the same questions about
+$H(t)$ and rank statistics.
 \end{itemize}
 
 \end{document}
