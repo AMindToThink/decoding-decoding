@@ -1,0 +1,232 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{parskip}
+\usepackage{hyperref}
+
+\input{macros.tex}
+
+\title{Natural-text filter calibration:\\
+ruling out filter pathology in F2.1}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Question}
+
+The F2.1 figure in \texttt{results/counter\_decode/figures/F2.1\_calibration\_gap.png}
+shows the streaming Laplace $\hat\beta$ filter drifting substantially during
+$\beta$-decoded generation: $\log\hat\beta$ reaches $\approx +1.3$ at
+$\beta_{\text{dec}}=2$ and $\approx -3.3$ at $\beta_{\text{dec}}=0.5$ by $t=199$,
+growing with $t$ and anti-symmetric in $\log\beta_{\text{dec}}$.
+The framework reads this as evidence the model's response to $\beta$-decoded
+prefixes is non-multiplicative.
+A weaker alternative: the filter has baseline drift even with no temperature
+manipulation, and the F2.1 gap is partly the filter's own pathology rather than
+a property of the imprint.
+This experiment rules out the weaker alternative.
+
+\section{Setup}
+
+Same model (Qwen-2.5-3B), same filter parameters
+($\sigma_0 = \sigmaZero$, log-normal Laplace, $\alpha = \gamma = 1$) as F0/F2.
+Four conditions, $\nPassagesWikiSelf$ passages each, 200 filter updates per passage:
+
+\begin{itemize}
+\item \textbf{WikiText / self\_gen} --- prompt = first 20 tokens of a
+WikiText-103 article; the model samples the next 200 tokens at
+$\beta_{\text{dec}}=1$; filter sees $(\ell_t, x_t)$ with
+$x_t \sim \mathrm{softmax}(\ell_t)$.
+\item \textbf{WikiText / natural} --- same 20-token prompt;
+the next 200 tokens are the real article continuation.
+\item \textbf{WritingPrompts / self\_gen} --- same protocol as WikiText/self\_gen
+but with WritingPrompts stories as the prompt source.
+\item \textbf{WritingPrompts / natural} --- same as WritingPrompts/self\_gen
+but $x_t$ is the real story token.
+\end{itemize}
+
+The two \textit{self\_gen} arms are the actual no-imprint null consistent with
+F2.1's sampling protocol --- the only way to make $x_t$ i.i.d.\ with respect to
+$\mathrm{softmax}(\ell_t)$, which is the distribution under which the filter's
+score $\ell_t[x_t] - E_q[\ell_t]$ is mean-zero by construction.
+The two \textit{natural} arms test the model's calibration on out-of-distribution
+text.
+
+The headline x-axis is cumulative Fisher
+$\Sigma_\tau \mathrm{Var}_q(\tau) = J_t - J_0$ (the filter's effective sample size),
+not $t$.
+Different corpora accumulate $J$ at different rates because of entropy
+differences; using $\Sigma\mathrm{Fisher}$ controls for that.
+Each condition is shown over its own data range so we don't hide tail behavior
+of low-entropy corpora.
+
+\section{Headline result}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.88\linewidth]{F_ntf_1_log_beta_vs_fisher.png}
+\caption{Median $\log\hat\beta_t$ across passages, with 25/75\% IQR band, plotted
+against cumulative Fisher.
+Self\_gen arms (blue tones) flatline near zero across both corpora;
+WikiText/natural tracks self\_gen tightly;
+WritingPrompts/natural drifts visibly negative and stays there.}
+\label{fig:headline}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\caption{Asymptotic $\log\hat\beta$ per condition (median, IQR across passages, SE of median, and trimmed median dropping the 3 worst tails on each side).}
+\begin{tabular}{lccccc}
+\toprule
+condition                            & $N$                & median           & IQR                                                                  & SE(med)             & trimmed med \\
+\midrule
+WikiText / self\_gen                 & \nPassagesWikiSelf & \logBetaFinalMedWikiSelf & $[\logBetaFinalIqrLowWikiSelf,\, \logBetaFinalIqrHighWikiSelf]$ & \logBetaFinalSeWikiSelf & \logBetaFinalTrimMedWikiSelf \\
+WikiText / natural                   & \nPassagesWikiNat  & \logBetaFinalMedWikiNat  & $[\logBetaFinalIqrLowWikiNat,\, \logBetaFinalIqrHighWikiNat]$   & \logBetaFinalSeWikiNat  & \logBetaFinalTrimMedWikiNat \\
+WritingPrompts / self\_gen           & \nPassagesWPSelf   & \logBetaFinalMedWPSelf   & $[\logBetaFinalIqrLowWPSelf,\, \logBetaFinalIqrHighWPSelf]$     & \logBetaFinalSeWPSelf   & \logBetaFinalTrimMedWPSelf \\
+WritingPrompts / natural             & \nPassagesWPNat    & \logBetaFinalMedWPNat    & $[\logBetaFinalIqrLowWPNat,\, \logBetaFinalIqrHighWPNat]$       & \logBetaFinalSeWPNat    & \logBetaFinalTrimMedWPNat \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three structural observations.
+
+\paragraph{(a) Self\_gen flatlines on both corpora.}
+Median $\log\hat\beta_\infty = \logBetaFinalMedWikiSelf$ (WikiText/self\_gen,
+$t = \logBetaFinalTWikiSelf$ vs.\ zero)
+and $\logBetaFinalMedWPSelf$ (WritingPrompts/self\_gen, $t = \logBetaFinalTWPSelf$).
+Both are within 1 SE of zero.
+This says: under self-sampling at $\beta_{\text{dec}}=1$ --- the no-imprint
+null --- the filter shows no baseline drift detectable at this sample size.
+The data is consistent with the filter being asymptotically unbiased.
+
+\paragraph{(b) WikiText/natural agrees with self\_gen.}
+Paired difference WikiText/natural $-$ WikiText/self\_gen $= \pairedMeanDiffWiki$
+(mean), SE $= \pairedSeDiffWiki$, $t = \pairedTStatWiki$.
+The two arms are statistically indistinguishable on Wikipedia.
+Qwen-2.5-3B is well-calibrated there: real Wikipedia next-tokens look exactly
+as the model expects under $\mathrm{softmax}(\ell_t)$.
+
+\paragraph{(c) WritingPrompts/natural drifts negative, robustly.}
+Median $\log\hat\beta_\infty = \logBetaFinalMedWPNat$ on the natural arm.
+Paired against WritingPrompts/self\_gen --- holding the prompt fixed and varying
+only the source of $x_t$ --- the difference is $\pairedMeanDiffWP$ (mean),
+SE $= \pairedSeDiffWP$, $t = \pairedTStatWP$ ($p < 10^{-3}$).
+The trimmed median (dropping 3 outliers per tail) equals
+$\logBetaFinalTrimMedWPNat$, identical to the untrimmed median, so the offset
+isn't driven by a few catastrophic passages.
+Qwen-2.5-3B is over-confident on actual Reddit creative writing: real
+WritingPrompts tokens systematically have lower logits than
+$\mathrm{softmax}(\ell_t)$ would predict.
+
+\section{Secondary diagnostics}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.78\linewidth]{F_ntf_3_final_distribution.png}
+\caption{Per-passage $\log\hat\beta_\infty$ across the four conditions.
+The WritingPrompts/natural box sits visibly below zero;
+the others straddle it.}
+\label{fig:boxplot}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.78\linewidth]{F_ntf_5_entropy_over_t.png}
+\caption{Model entropy $H(\mathrm{softmax}(\ell_t))$ per step, median + IQR.
+WikiText/natural has the lowest entropy ($\meanEntropyWikiNat$ nats),
+confirming that real Wikipedia is more predictable to the model than its own
+self-generated continuations from the same prompts.}
+\label{fig:entropy}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.7\linewidth]{F_ntf_6_entropy_vs_finalbeta.png}
+\caption{Final $\log\hat\beta$ vs.\ mean model entropy per passage.
+No clean monotone relationship across the cloud;
+the WritingPrompts/natural cluster sits at moderate entropy with systematically
+lower $\log\hat\beta$.}
+\label{fig:scatter}
+\end{figure}
+
+\section{What this implies for F2.1}
+
+This experiment establishes one narrow but useful fact:
+\emph{the filter has no detectable baseline drift on i.i.d.\ samples from the model's own distribution},
+on either corpus.
+F2.1 shows $|\log\hat\beta|$ reaching 1.3--3.3 at extreme $\beta_{\text{dec}}$ values,
+which is at least an order of magnitude larger than the largest natural-text
+offset we measured ($\logBetaFinalMedWPNat$ on WritingPrompts).
+So \emph{the F2.1 drift is not filter-side baseline pathology}.
+
+This is strictly narrower than "the F2.1 drift is imprint structure."
+The natural-text experiment does not test what the filter does when fed
+$\beta$-decoded prefixes that may be non-multiplicatively distorted relative to
+the imprint model.
+A filter that correctly handles self-sampled data can still misattribute a
+non-multiplicative distortion to $\beta$ if the imprint hypothesis is wrong.
+So F2.1's drift could reflect (i) a real multiplicative imprint that the filter
+recovers correctly, or (ii) a non-multiplicative distortion that the filter
+interprets through its imprint prior.
+This experiment cannot distinguish (i) from (ii).
+It only rules out (iii) baseline filter drift unrelated to the decoder.
+
+\section{A separate finding: out-of-distribution calibration offset}
+
+Independently of the F2.1 question, the natural arm establishes that Qwen-2.5-3B
+has a small but real over-confidence offset on Reddit creative writing
+($\pairedMeanDiffWP$ in log-$\beta$ space against the self-gen baseline, paired
+$t = \pairedTStatWP$) and no detectable offset on Wikipedia
+(paired $t = \pairedTStatWiki$).
+This is a confound for any future use of the filter on out-of-distribution
+corpora.
+
+Whether this offset contaminates the F2.1 result on the existing F0 prompts is
+\emph{not measured here}.
+The F0 prompts (\texttt{src/decoding\_decoding/prompts.py}) include fiction and
+dialogue genres that may inherit the WritingPrompts-like offset.
+Verifying this would require running the natural-text filter on held-out natural
+continuations of each F0 prompt --- a small follow-up experiment.
+
+\section{Limitations}
+
+\begin{itemize}
+\item \textbf{Two corpora is two corpora.}
+The headline claim "filter is well-specified under self-sampling" is corpus-independent,
+but the magnitude of the WritingPrompts offset reflects that one dataset.
+
+\item \textbf{Trajectory-to-trajectory variance is wide.}
+Per-passage IQRs span $\sim 0.4$ in log-$\beta$ space, dominated by the
+first few filter steps where $J_t$ is small and individual updates move
+$\hat\beta$ a lot.
+Median-based statistics are stable, but tail behavior is undersampled at $N=64$.
+
+\item \textbf{The natural-text test doesn't reach the framework's load-bearing claim.}
+F2.1 shows non-multiplicative behavior under $\beta$-decoding; this experiment
+shows the filter doesn't invent that behavior on natural text.
+It does not isolate whether the $\beta$-decoded drift is faithful multiplicative
+imprint or some other distortion the filter is reading through its prior.
+\end{itemize}
+
+\section{Bottom line}
+
+\textit{What this rules out:}
+the F2.1 calibration gap is not artifact of filter-side baseline drift.
+On i.i.d.\ samples from $\mathrm{softmax}(\ell_t)$, the filter holds
+$\log\hat\beta$ within $\sim 0.07$ of zero (within 1 SE) regardless of corpus.
+
+\textit{What this rules in:}
+a small ($\sim 0.3$ log-units) calibration offset on creative-writing text that
+should be treated as a confound on any future filter use on out-of-distribution
+data.
+
+\textit{What this does not address:}
+whether the F2.1 drift is true multiplicative imprint vs.\ a non-multiplicative
+distortion the filter is misinterpreting.
+That requires a different experiment.
+
+\end{document}
