@@ -1,0 +1,231 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{parskip}
+\usepackage{hyperref}
+
+\input{macros.tex}
+
+\title{Exp A: per-corpus calibration baseline\\
+       the streaming filter is not online MLE}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Question}
+
+The class proposal's headline framing positions the streaming Laplace
+$\hat\beta$ filter as ``online temperature scaling [Guo17] converging in the
+large-data limit to the same global $T$ Guo's batch MLE fits.''  This
+experiment tests that claim directly.
+
+For each of WikiText-103 and WritingPrompts, we (i) fit two
+$\hat\beta$ estimators on a calibration half---streaming
+($\hat\beta_{\mathrm{stream}}$, per-passage filter, aggregated by median, and
+a pooled single-trajectory variant) and Guo MLE
+($\hat\beta_{\mathrm{MLE}}$, scipy on the calibration-half NLL), and
+(ii) evaluate the per-token test PPL under each.
+
+\section{Setup}
+
+Qwen-2.5-3B, no fine-tuning. \calNcal{} calibration passages plus
+\calNtest{} test passages per corpus, each tokenized to exactly
+\calLength{} tokens. Passage-level (not token-level) split: passages
+0--\calNcal{} are calibration, passages \calNcal{}--$2\,\calNcal$ are test.
+Filter: $\sigma_0 = \calSigmaZero$, warmup \calWarmup{} tokens, $\calU$
+filter steps per passage.
+
+Calibration estimators:
+\begin{description}
+\item[$\hat\beta_{\mathrm{stream\_med}}$.] Run the existing Laplace filter
+(\texttt{counter\_decode.laplace\_update}) per-passage with state reset
+between passages; take the median final $\hat\eta$ across passages.
+\item[$\hat\beta_{\mathrm{stream\_pooled}}$.] One filter trajectory across all
+$\calNcal \cdot \calU = \approx 14{,}160$ calibration tokens, no resets.
+This is the apples-to-apples object vs.\ a batch fit.
+\item[$\hat\beta_{\mathrm{MLE}}$.] \texttt{scipy.optimize.minimize\_scalar} on
+the per-token NLL
+$\;-\tfrac{1}{T}\sum_t \log\mathrm{softmax}(\beta\cdot\ell_t)[x_{t+1}]$
+over the same calibration tokens.
+\end{description}
+
+Test evaluation: per-passage per-token NLL on the test split at four
+$\beta$ candidates (T = 1, own-corpus streaming, own-corpus MLE,
+\emph{other}-corpus MLE). Headline statistic is per-passage
+$\Delta\log\mathrm{PPL} = \log\mathrm{PPL}(\beta) - \log\mathrm{PPL}(1)$,
+with paired $t$-tests against zero across the $\calNtest$ test passages.
+
+\section{Headline}
+
+\begin{table}[h]
+\centering
+\caption{Calibration $\hat\beta$ values per estimator.  All as
+$\log\hat\beta$; $\log\hat\beta = 0 \Leftrightarrow \hat\beta = 1$.}
+\begin{tabular}{lccc}
+\toprule
+corpus & $\log\hat\beta_{\mathrm{stream\_med}}$ & $\log\hat\beta_{\mathrm{stream\_pooled}}$ & $\log\hat\beta_{\mathrm{MLE}}$ \\
+\midrule
+WikiText        & \calLogBetaStreamMedWT & \calLogBetaStreamPooledWT & \calLogBetaMLEWT \\
+WritingPrompts  & \calLogBetaStreamMedWP & \calLogBetaStreamPooledWP & \calLogBetaMLEWP \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Test PPL by $\beta$ setting (per-token, averaged over passages).
+$\Delta\log\mathrm{PPL}$ is per-passage paired against the $T=1$ baseline;
+$t$ is the one-sample $t$-stat.  Significance after Bonferroni correction
+($k=8$) requires $|t| > 2.85$.}
+\begin{tabular}{lcccc}
+\toprule
+test corpus / $\beta$ setting & $\hat\beta$ value & test PPL & $\Delta\log\mathrm{PPL}$ & paired $t$ \\
+\midrule
+WikiText / $T=1$                    & 1.000 & \calTestPPLWTT1            & \calTestDeltaLogPPLWTT1            & \calTestTStatWTT1            \\
+WikiText / stream\_med              &       & \calTestPPLWTWTstreammed   & \calTestDeltaLogPPLWTWTstreammed   & \calTestTStatWTWTstreammed   \\
+WikiText / stream\_pooled           &       & \calTestPPLWTWTstreampooled& \calTestDeltaLogPPLWTWTstreampooled& \calTestTStatWTWTstreampooled\\
+WikiText / WT\_MLE                  &       & \calTestPPLWTWTMLE         & \calTestDeltaLogPPLWTWTMLE         & \calTestTStatWTWTMLE         \\
+WikiText / WP\_MLE                  &       & \calTestPPLWTWPMLE         & \calTestDeltaLogPPLWTWPMLE         & \calTestTStatWTWPMLE         \\
+\midrule
+WritingPrompts / $T=1$              & 1.000 & \calTestPPLWPT1            & \calTestDeltaLogPPLWPT1            & \calTestTStatWPT1            \\
+WritingPrompts / stream\_med        &       & \calTestPPLWPWPstreammed   & \calTestDeltaLogPPLWPWPstreammed   & \calTestTStatWPWPstreammed   \\
+WritingPrompts / stream\_pooled     &       & \calTestPPLWPWPstreampooled& \calTestDeltaLogPPLWPWPstreampooled& \calTestTStatWPWPstreampooled\\
+WritingPrompts / WP\_MLE            &       & \calTestPPLWPWPMLE         & \calTestDeltaLogPPLWPWPMLE         & \calTestTStatWPWPMLE         \\
+WritingPrompts / WT\_MLE            &       & \calTestPPLWPWTMLE         & \calTestDeltaLogPPLWPWTMLE         & \calTestTStatWPWTMLE         \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\linewidth]{F_cal_2_nll_curve.png}
+\caption{Per-token calibration NLL as a function of $\log\beta$, with each
+estimator marked.  The minimum is at $\log\beta \approx 0$ on both corpora
+(green) --- Qwen-2.5-3B is essentially well-calibrated.  The pooled streaming
+filter (red) lands far up the steep wall of the NLL surface, not at the
+minimum.  The per-passage-median streaming (blue) is closer to MLE but still
+biased downward on WritingPrompts.}
+\label{fig:nll-surface}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\linewidth]{F_cal_3_test_ppl.png}
+\caption{Per-passage test PPL across $\beta$ settings (log y-axis).
+Applying $\hat\beta_{\mathrm{stream\_pooled}}$ at test time costs
+14$\times$ (WikiText) and 7$\times$ (WritingPrompts) increases in PPL.
+$\hat\beta_{\mathrm{MLE}}$ is statistically indistinguishable from
+$T=1$.}
+\label{fig:boxplots}
+\end{figure}
+
+Three structural facts.
+
+\paragraph{(a) The streaming filter is not online MLE.}
+Calibration NLL at $\hat\beta=1$ vs at $\hat\beta_{\mathrm{MLE}}$ differs
+in the fourth decimal place on both corpora
+(\calNllOneWT{} vs \calNllMLEWT{} on WikiText;
+\calNllOneWP{} vs \calNllMLEWP{} on WritingPrompts).
+This places the Guo MLE essentially at $\log\beta=0$.  The pooled streaming
+filter on the \emph{same data} settles at $\log\hat\beta =
+\calLogBetaStreamPooledWT$ (WikiText) and $\calLogBetaStreamPooledWP$
+(WritingPrompts) --- gaps of $\approx \calConsistencyGapWT$ and
+$\calConsistencyGapWP$ nats from MLE.  The two estimators have different
+fixed points.
+
+\paragraph{(b) Why the gap.}
+The filter's per-step update (\texttt{counter\_decode.py:91--182}) computes
+\textbf{$q = \mathrm{softmax}(\ell_t)$}, $E_q[\ell_t]$, $\mathrm{Var}_q[\ell_t]$
+--- all at $\beta = 1$, never reevaluated at the running $\hat\beta$.
+This is by design: the matched-prior bootstrap-reference framework
+(\texttt{bayesian-sampler/counter\_decoding.html}) defines $\ell^*_t = \ell_t /
+\hat\beta$ exactly so that the score and Fisher are
+$\hat\beta$-independent.  The filter is therefore a per-token Bayesian update
+\emph{under that imprint model}, not an iterated Newton solver on the Guo
+NLL.  Its pooled final $\hat\eta$ behaves like a single damped Newton step
+from the prior mode using $\sum_t\bigl(\ell_t[x_{t+1}] - E_q[\ell_t]\bigr)$
+in the numerator and $1/\sigma_0^2 + \sum_t \mathrm{Var}_q[\ell_t]$ in the
+denominator --- accurate near $\beta = 1$, but increasingly biased as one
+walks away from $\beta = 1$ on a non-quadratic NLL.  Figure
+\ref{fig:nll-surface} shows exactly this geometry: the NLL surface is flat
+near the minimum, so a small gradient at $\beta = 1$ divided by a smaller
+curvature lands far away.
+
+\paragraph{(c) Applied as a calibrator, the filter hurts test PPL.}
+On WritingPrompts test, $\hat\beta_{\mathrm{stream\_med}}$ (a per-passage
+estimator close to what one would actually apply online) increases per-token
+PPL from \calTestPPLWPT1 to \calTestPPLWPWPstreammed{} ---
+$\Delta\log\mathrm{PPL} = \calTestDeltaLogPPLWPWPstreammed$ ($t =
+\calTestTStatWPWPstreammed$).  The pooled streaming $\hat\beta$ is
+catastrophic.  $\hat\beta_{\mathrm{MLE}}$ is statistically indistinguishable
+from $T = 1$ (paired $t = \calTestTStatWPWPMLE$, $p =
+\calTestPValWPWPMLE$).  Cross-corpus MLE
+(WT $\to$ WP and WP $\to$ WT) is also indistinguishable from $T=1$.
+
+\section{What this implies for the project}
+
+\begin{enumerate}
+\item \textbf{The streaming filter is not online temperature scaling.}
+It measures the model's local belief about its decoder under the matched-prior
+imprint hypothesis.  The Guo MLE measures the post-hoc temperature that
+maximizes target-token likelihood.  On Qwen-2.5-3B the two place
+$\hat\beta$ at $\log\beta = -0.94$ and $0.00$ respectively on WikiText ---
+not consistent in the large-data limit.  The proposal's claim of asymptotic
+equivalence (\texttt{decoding-modeling.tex}) does not survive this test and
+should be removed.
+
+\item \textbf{Qwen-2.5-3B is essentially well-calibrated} on these corpora.
+The Guo NLL minimum sits at $\log\beta \approx 0$.  There is no meaningful
+post-hoc temperature gain to be had from either WikiText or WritingPrompts
+text in this length/model regime.  Any future Exp B (per-context sliding
+$\hat\beta_t$) cannot defeat $\beta=1$ on calibration grounds alone.
+
+\item \textbf{The filter still has an interpretable measurement target}:
+the model's gradient signal at $\beta=1$, which under the imprint hypothesis
+is the model's local belief about how much its prefix was temperature-scaled.
+This is a different research question than calibration; the project's
+framing should track that.  In particular, Exp C (entropy after a
+$\beta_{\mathrm{dec}} \neq 1$ prefix) directly probes whether the model's
+distribution responds to the apparent decoder of its own context.
+
+\item \textbf{The original natural-text findings retain their narrow
+content}: the per-passage filter showed no detectable baseline drift under
+self-sampling (\texttt{natural\_text/findings.pdf}).  This was a
+filter-pathology check, not a calibration claim, and is unaffected.
+\end{enumerate}
+
+\section{Limitations}
+
+\begin{itemize}
+\item One model (Qwen-2.5-3B), one tokenization, one passage length
+($\calLength$).  The MLE-vs-streaming gap and the "Qwen is well-calibrated"
+finding both depend on these.
+\item No held-out validation set within the calibration half.  All
+calibration-MLE fitting is on the same tokens used to compute the streaming
+$\hat\beta$.  Test PPL is on disjoint passages, so the headline test result
+is properly held-out, but per-corpus $\hat\beta$ comparisons are in-sample.
+\item Per-passage and pooled streaming differ in aggregation; the per-passage
+median is the operational quantity (what one would compute online), the
+pooled trajectory is the apples-to-apples comparison vs.\ pooled MLE.  Both
+disagree with MLE.  Other aggregations (mean, precision-weighted mean) were
+not explored.
+\end{itemize}
+
+\section{Bottom line}
+
+\begin{itemize}
+\item Streaming filter $\neq$ Guo MLE on real data.  Different objectives,
+different fixed points, large gap ($\approx 1$ nat in $\log\hat\beta$).
+\item Qwen-2.5-3B is well-calibrated on these corpora; no post-hoc
+temperature gain is available.
+\item Applying the streaming $\hat\beta$ as a calibrator increases test PPL.
+\item The filter still measures something coherent --- the model's local
+belief about its decoder --- but the project's framing should treat
+``calibration'' and ``imprint detection'' as distinct.
+\end{itemize}
+
+\end{document}

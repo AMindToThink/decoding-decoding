@@ -74,6 +74,9 @@ class CalibrationFit:
     nll_at_mle: float                      # per-token NLL at MLE β
     nll_at_one: float                      # per-token NLL at β = 1
     total_filter_steps: int                # n_passages * (length - warmup)
+    # NLL surface (for plotting). Grid in log β; per-token NLL on calibration set.
+    log_beta_grid: np.ndarray              # (41,)
+    nll_curve: np.ndarray                  # (41,)
 
 
 @dataclass(frozen=True)
@@ -199,6 +202,13 @@ def _run_calibration_half(
                 )
     log_beta_streaming_pooled = float(pooled_state.eta_hat.detach().cpu().numpy()[0])
 
+    # ----- NLL curve over a sweep of β values, for plotting the surface shape.
+    log_beta_grid = np.linspace(-1.5, 0.5, 41, dtype=np.float64)   # β ∈ [0.22, 1.65]
+    nll_curve = np.array(
+        [per_token_nll(float(np.exp(lb))) for lb in log_beta_grid],
+        dtype=np.float64,
+    )
+
     # Free the giant GPU stash before test eval.
     del logits_all, targets_all, flat_logits, flat_targets
     torch.cuda.empty_cache()
@@ -213,6 +223,8 @@ def _run_calibration_half(
         nll_at_mle=nll_at_mle,
         nll_at_one=nll_at_one,
         total_filter_steps=n_pass * U,
+        log_beta_grid=log_beta_grid,
+        nll_curve=nll_curve,
     )
 
 
@@ -441,6 +453,8 @@ def main() -> None:
         wt_nll_at_mle=fit_wt.nll_at_mle,
         wt_nll_at_one_calibration=fit_wt.nll_at_one,
         wt_total_filter_steps=fit_wt.total_filter_steps,
+        wt_log_beta_grid=fit_wt.log_beta_grid,
+        wt_nll_curve=fit_wt.nll_curve,
         wt_test_beta_labels=np.array(test_eval_wt.beta_labels, dtype=object),
         wt_test_beta_values=np.array(test_eval_wt.beta_values, dtype=np.float64),
         wt_test_per_passage_total_nll=test_eval_wt.per_passage_total_nll,
@@ -453,6 +467,8 @@ def main() -> None:
         wp_nll_at_mle=fit_wp.nll_at_mle,
         wp_nll_at_one_calibration=fit_wp.nll_at_one,
         wp_total_filter_steps=fit_wp.total_filter_steps,
+        wp_log_beta_grid=fit_wp.log_beta_grid,
+        wp_nll_curve=fit_wp.nll_curve,
         wp_test_beta_labels=np.array(test_eval_wp.beta_labels, dtype=object),
         wp_test_beta_values=np.array(test_eval_wp.beta_values, dtype=np.float64),
         wp_test_per_passage_total_nll=test_eval_wp.per_passage_total_nll,
