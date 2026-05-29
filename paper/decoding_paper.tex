@@ -1,0 +1,549 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{parskip}
+\usepackage[round]{natbib}
+\usepackage[hidelinks]{hyperref}
+
+% --- script-generated inputs (numbers and tables; never hand-typed) ---
+% Figures are imported in place via graphicspath; nothing is copied.
+\graphicspath{%
+  {../results/counter_decode/figures/}%
+  {../results/figures/}%
+  {../results/figures_L2048/}%
+  {../results/counter_decode/natural_text/}%
+  {../results/counter_decode/calibration_baseline/}%
+  {../results/counter_decode/sliding_filter_mixed/}%
+  {../results/counter_decode/entropy_probe/}%
+  {../results/counter_decode/belief_sweep_combined/}%
+}
+\newcommand{\tabdir}{../results/tables}
+% Single source for all inline numbers: build_paper_macros.py emits this file,
+% ingesting the Exp A and natural-text report macros (digit-in-name sanitised).
+\input{../results/tables/paper_macros.tex}
+
+\title{Modeling and Calibrating: LLMs Figure out their Decoding Process}
+\author{Matthew Khoriaty}
+\date{Project write-up, \emph{Reliable ML with Unreliable Black Boxes}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+An autoregressive language model is trained to predict text, so when it
+generates text it has an incentive to model its own generation process ---
+including the decoder that samples from its logits. We accumulate evidence that
+models do exactly this: they infer features of their own decoder (a token
+blacklist, a top-$k$ truncation, a temperature) from the text in their context,
+and shift their predictions accordingly. We build a streaming Bayesian filter
+that estimates the model's inferred inverse-temperature $\hat\beta_t$ online and
+a corrector that divides a user's target by $\hat\beta_t$. An empirical sweep
+shows the corrector pins the effective temperature in the ``boredom'' regime
+($\beta^{\mathrm{target}}>1$) but overshoots in the ``confusion'' regime
+($\beta^{\mathrm{target}}<1$). Probing what the filter measures sharpens the
+picture and revises the original framing: on real text the filter is
+\emph{not} an online version of Guo temperature scaling (it sits
+$\sim\!1$ nat in $\log\hat\beta$ away from the post-hoc MLE, e.g.\
+$\calLogBetaStreamPooledWT$ vs $\calLogBetaMLEWT$ on WikiText), and Qwen-2.5-3B
+is already well calibrated on naturalistic English. A controlled
+sampler-switch experiment falsifies the strong hypothesis that the belief is a
+fast posterior read off per-token entropy. The belief that survives is slower
+and more structural --- carried by rank statistics and blacklist signatures,
+not instantaneous entropy. Finally, two metrics for the corrector disagree:
+closed-loop stability prefers full correction, while invariance on held-out
+natural text shows full correction is catastrophic unless the filter is given a
+fading memory ($\gamma<1$). All numbers and tables in this document are
+generated from the experiments' data files by build scripts; the prose cites
+them by name.
+\end{abstract}
+
+% =====================================================================
+\section{Introduction}
+% =====================================================================
+An autoregressive language model emits, at each step, a probability
+distribution over next tokens given the prefix so far. \emph{Decoding} is the
+choice of how to sample from that distribution: temperature scaling, top-$k$,
+and top-$p$ all act by sharpening or flattening the model's distribution before
+drawing the next token. This project starts from a question about what a
+language model ``thinks'' about its own decoding process. Because models are
+trained for text prediction, not generation, they have an incentive to model
+their own generation process. We hypothesize, and have begun to validate, that
+\emph{a language model forms a belief about its own decoding parameters by
+conditioning on the text it has generated so far}. If you sample at a low
+temperature, the model notices that the recent text is low-entropy and adjusts
+its output probabilities to match; the low-temperature samples then further
+condition the model to expect low-temperature text. This is a feedback loop.
+
+Mirostat~\citep{basu2021mirostat} documented a version of this effect and
+patched it with a control loop on aggregate per-token surprise. That fix cannot
+adapt to context, because high- or low-entropy text is sometimes exactly what a
+response calls for. The broader and (to us) more interesting question is to
+\emph{model} what an LLM believes about its own decoder. This is close to the
+calibration literature --- post-hoc temperature scaling~\citep{guo2017calibration},
+its use on language-model surprisal~\citep{liu2024temperature}, and trained
+universal calibrators~\citep{shen2024thermometer} --- and to the
+algorithms-with-predictions viewpoint~\citep{mitzenmacher2020algorithms} of the
+course, in which a possibly-unreliable prediction (here, the model's inferred
+decoder) augments a downstream decision. It also connects to recent work on
+online and high-dimensional
+calibration~\citep{peng2025calibration,fishelson2025calibration}.
+
+\paragraph{Contributions and revisions.}
+The original proposal framed the streaming estimator as ``online temperature
+scaling converging in the large-data limit to the same global $T$ that Guo's
+batch MLE fits.'' This write-up reports the experiments we ran to test that
+framing, and the framing does not fully survive. We find: (i) positive,
+model-internal evidence that the model infers its decoder
+(\S\ref{sec:positive}); (ii) a corrector that works asymmetrically
+(\S\ref{sec:corrector}); (iii) that the filter is \emph{not} Guo MLE on real
+text and that the well-calibrated-model regime leaves no post-hoc temperature
+gain (\S\ref{sec:measure}); (iv) that the belief is not a fast entropy read-out
+(\S\ref{sec:form}); and (v) that two natural criteria for tuning the corrector
+disagree, with memory decay as the load-bearing parameter (\S\ref{sec:dynamics}).
+The belief-imprint hypothesis is \emph{refined and constrained}, not refuted.
+
+% =====================================================================
+\section{Method: a streaming Laplace filter on $\log\beta$}\label{sec:method}
+% =====================================================================
+Let $\ell_t \in \mathbb{R}^V$ be the model's pre-decoding logits at step $t$ and
+$x_t$ the token actually emitted. We posit a matched-prior \emph{imprint model}:
+the model behaves as if the natural-reference logits are $\ell^*_t = \ell_t /
+\hat\beta_t$, i.e.\ the observed logits are the reference scaled by the model's
+current belief $\hat\beta_t$ about its own inverse temperature. Placing a
+log-normal prior on $\beta$ (mean $1$, scale $\sigma_0$) and doing a per-token
+Laplace (Newton) update of the posterior on $\eta=\log\beta$ gives a streaming
+estimator whose update uses the score and Fisher information of the categorical
+likelihood under $q=\mathrm{softmax}(\ell_t)$:
+\[
+  \text{score}_t = \ell_t[x_t] - \mathbb{E}_q[\ell_t],
+  \qquad
+  J_t = \tfrac{1}{\sigma_0^2} + \textstyle\sum_{\tau\le t}\mathrm{Var}_q[\ell_\tau].
+\]
+Crucially $q$, $\mathbb{E}_q[\ell_t]$, and $\mathrm{Var}_q[\ell_t]$ are
+evaluated at $\beta=1$ and never re-evaluated at the running $\hat\beta_t$: the
+imprint model is defined precisely so the score and Fisher are
+$\hat\beta$-independent. This makes the filter a per-token Bayesian update under
+the imprint model, \emph{not} an iterated Newton solver on a global likelihood
+--- a distinction that becomes important in \S\ref{sec:measure}. Three knobs
+parameterize the belief dynamics: an evidence weight $\alpha$ (per-step step
+size), a memory decay $\gamma$ (exponential forgetting; $\gamma=1$ is no decay,
+$\gamma<1$ is a fading window of effective length $1/(1-\gamma)$), and a
+correction exponent $p$.
+
+If the imprint is a single scalar rescaling, dividing the user's target by the
+estimate yields a corrector that pins the effective sampling distribution to
+target:
+\[
+  \beta^{\mathrm{dec}}_t = \beta^{\mathrm{target}} / \hat\beta_t^{\,p},
+  \qquad p=1\ \text{(full)},\quad p=0\ \text{(off)},\quad p\in(0,1)\ \text{(partial)}.
+\]
+Everything below uses Qwen-2.5-3B (base, fp16). The filter implementation and
+its unit tests (shift-invariance, batched\,=\,serial equivalence, recovery of
+$\beta_{\mathrm{true}}$ under matched-prior synthetic data) live in
+\texttt{src/decoding\_decoding/counter\_decode.py}.
+
+% =====================================================================
+\section{The model infers its decoder: positive evidence}\label{sec:positive}
+% =====================================================================
+Before modeling the belief, we establish that there is one. Two controlled
+experiments isolate the model's response to a known decoder manipulation,
+holding content fixed and comparing treatment to control with cluster-bootstrap
+confidence intervals.
+
+\paragraph{Blacklist self-prediction.}
+When the $k$ highest-probability tokens are banned (set to zero probability) at
+sampling time, the model's own softmax probability on the banned token drops
+between early and late sequence positions --- it learns its blacklist from the
+absent-token signature. For the rank-1 ban (the token `\,the'), the late-minus-early
+within-treatment change is $\Delta p_{\mathrm{late-early}} = \blRankOneDeltaP$,
+and the paired late treatment-vs-control difference is $\blRankOneTvc$ with 95\%
+CI $[\blRankOneTvcLo,\,\blRankOneTvcHi]$, clear of zero
+(Table~\ref{tab:blacklist}, Fig.~\ref{fig:blacklist}).
+
+\begin{table}[h]
+\centering
+\caption{Blacklist self-prediction (run 2026-05-10). CI is the cluster-bootstrap
+95\% interval on the late treatment-minus-control difference.}
+\label{tab:blacklist}
+\input{\tabdir/tab_blacklist.tex}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\linewidth]{fig_blacklist_pbanned.png}
+\caption{Model probability assigned to the banned token vs.\ sequence position,
+per banned rank. Probability mass on a commonly-banned token decays as the model
+infers the ban from its absence in the context.}
+\label{fig:blacklist}
+\end{figure}
+
+\paragraph{Top-$k$ self-prediction.}
+Under top-$k$ sampling, the model's predicted-rank distribution develops a cliff
+at rank $K$ that exceeds the corresponding cliff under unrestricted sampling.
+The treatment-minus-control gap at rank $K$ is $\tkDeltaKthree$ for $k=3$ and
+$\tkDeltaKfive$ for $k=5$ (Table~\ref{tab:topk}). Within-treatment
+concentration grows between early and late positions for finite $k$ and
+\emph{shrinks} for $k=\infty$ --- this is not generic drift but a response to
+the truncation.
+
+\begin{table}[h]
+\centering
+\caption{Top-$k$ self-prediction ($L=2048$, run 2026-05-09): the extra cliff at
+rank $K$ in the predicted-rank distribution, treatment minus control.}
+\label{tab:topk}
+\input{\tabdir/tab_topk.tex}
+\end{table}
+
+These two results are the load-bearing positive evidence: the model
+demonstrably conditions its predictions on which tokens its decoder did and did
+not allow.
+
+% =====================================================================
+\section{The corrector and concentration dynamics}\label{sec:corrector}
+% =====================================================================
+We next put the filter in a closed loop. Self-generating $200$ tokens per
+prompt at six values of $\beta^{\mathrm{target}}$, we compare an
+\emph{uncorrected} arm (fixed $\beta^{\mathrm{dec}}=\beta^{\mathrm{target}}$)
+against a \emph{corrected} arm ($\beta^{\mathrm{dec}}_t =
+\beta^{\mathrm{target}}/\hat\beta_t$).
+
+\paragraph{Concentration drift.}
+The uncorrected arm sharpens for $\beta^{\mathrm{target}}>1$ (a ``boredom
+trap'') and flattens for $\beta^{\mathrm{target}}<1$ (a ``confusion trap'');
+the corrected arm keeps the sampling distribution bounded in both directions
+(Table~\ref{tab:f0}, Fig.~\ref{fig:f0}). The $\beta^{\mathrm{target}}=1$ row is
+a negative control, where the two arms coincide.
+
+\begin{table}[h]
+\centering
+\caption{F0 concentration, late trajectory ($t\in[150,200]$), corrected vs.\
+uncorrected: max-probability and entropy of the sampling distribution.}
+\label{tab:f0}
+\input{\tabdir/tab_f0_concentration.tex}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.92\linewidth]{F0_concentration.png}
+\caption{Concentration (max-$P$ and entropy) of the sampling and pre-decoding
+distributions over $t$, six $\beta^{\mathrm{target}}$ rows, corrected (green)
+vs.\ uncorrected (red). The uncorrected arm runs away in both regimes; the
+corrected arm stays bounded.}
+\label{fig:f0}
+\end{figure}
+
+\paragraph{An asymmetry.} The corrector is not symmetric. In the boredom regime
+it pins concentration near its $t=0$ value, as the theory predicts. In the
+confusion regime it only partially works: the corrected late max-$P_{\text{sample}}$
+at $\beta^{\mathrm{target}}=0.5$ settles at $\fzeroMaxPcorrHalf$, well above
+where it starts --- an upward drift the strict (flat-in-$t$) prediction does
+not allow. The mechanism is visible in the filter: under uncorrected
+$\beta^{\mathrm{dec}}=0.5$, the streaming estimate runs to $\log\hat\beta =
+\fzeroLogbhatHalf$ by $t=200$ (Table~\ref{tab:f12}), an overshoot. Dividing the
+target by an overshooting $\hat\beta$ produces an over-large
+$\beta^{\mathrm{dec}}$, hence the residual sharpening.
+
+\begin{table}[h]
+\centering
+\caption{Streaming $\log\hat\beta$ at $t=200$ under uncorrected decoding (F1.2):
+sharp decoders push it up, flat decoders push it down, asymmetrically.}
+\label{tab:f12}
+\input{\tabdir/tab_f12_drift.tex}
+\end{table}
+
+\paragraph{Closed-loop check and multiplicativity.} The corrected arm pins
+$\beta^{\mathrm{eff}}=\beta^{\mathrm{target}}$ by construction
+(Table~\ref{tab:f3}: the corrected error $E(T)$ is numerically zero), so this is
+a tautological check that the loop ran; the uncorrected error grows worst at
+$\beta^{\mathrm{target}}=0.5$, where $E(T)=\fzeroEuncoHalf$ nats (a drift of
+more than two orders of magnitude in $\beta^{\mathrm{eff}}$). The imprint is
+\emph{approximately} multiplicative: an SVD of the centered across-decoder logit
+matrix leaves an off-axis residual fraction that grows to $R=\fzeroRfinal$ by
+$t=200$, so $15\%$ of the across-decoder variation is not explained by a single
+scalar $\beta$.
+
+\begin{table}[h]
+\centering
+\caption{Closed-loop error $E(T)=\mathrm{median}\,|\log\beta^{\mathrm{eff}}-\log\beta^{\mathrm{target}}|$
+at $t=200$ (F3).}
+\label{tab:f3}
+\input{\tabdir/tab_f3_closedloop.tex}
+\end{table}
+
+% =====================================================================
+\section{What does the filter actually measure?}\label{sec:measure}
+% =====================================================================
+The corrector's confusion-regime failure motivates asking what the filter's
+$\hat\beta$ is. We test the proposal's claim --- that it is online Guo
+temperature scaling --- directly, and find it false on real text.
+
+\paragraph{No filter pathology under self-sampling.}
+First we rule out the weakest alternative: that the filter drifts on its own.
+Feeding the filter i.i.d.\ samples from $\mathrm{softmax}(\ell_t)$ at
+$\beta^{\mathrm{dec}}=1$ (the no-imprint null), $\log\hat\beta$ flatlines ---
+median $\logBetaFinalMedWikiSelf$ on WikiText self-generation and
+$\logBetaFinalMedWPSelf$ on WritingPrompts, both within one standard error of
+zero (Fig.~\ref{fig:ntf}). On real Wikipedia continuations the filter agrees
+with self-sampling (paired $t=\pairedTStatWiki$), but on real WritingPrompts it
+drifts negative: a paired difference of $\pairedMeanDiffWP$ in $\log\beta$
+($t=\pairedTStatWP$, $p<10^{-3}$). So the model is well calibrated on Wikipedia
+and slightly over-confident on Reddit creative writing --- a real out-of-domain
+calibration offset, but an order of magnitude smaller than the drift seen under
+extreme $\beta$-decoding. The closed-loop drift is not a filter artifact.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\linewidth]{F_ntf_1_log_beta_vs_fisher.png}
+\caption{Median $\log\hat\beta_t$ vs.\ cumulative Fisher (the filter's effective
+sample size). Self-generation arms flatline at zero; WritingPrompts/natural
+drifts negative and stays there.}
+\label{fig:ntf}
+\end{figure}
+
+\paragraph{The streaming filter is not Guo MLE (Exp A).}
+On a proper per-corpus calibration split, the Guo MLE sits essentially at
+$\log\beta=0$ on both corpora ($\calLogBetaMLEWT$ on WikiText,
+$\calLogBetaMLEWP$ on WritingPrompts), confirming Qwen-2.5-3B is already
+calibrated. The pooled streaming filter on the \emph{same} tokens settles at
+$\log\hat\beta=\calLogBetaStreamPooledWT$ (WikiText) and
+$\calLogBetaStreamPooledWP$ (WritingPrompts) --- about a nat away
+(Table~\ref{tab:expa-beta}, Fig.~\ref{fig:expa-nll}). The two estimators have
+\emph{different fixed points}: the filter is a single damped Newton step from
+the prior mode under the imprint model, accurate near $\beta=1$ but biased as it
+walks up the flat NLL surface, whereas the Guo MLE is the global minimizer.
+Applied as a calibrator the filter \emph{hurts}: on WritingPrompts test, the
+per-passage streaming $\hat\beta$ raises per-token PPL from $\calTestPPLWPTOne$ to
+$\calTestPPLWPWPstreammed$ ($\Delta\log\mathrm{PPL}=\calTestDeltaLogPPLWPWPstreammed$,
+$t=\calTestTStatWPWPstreammed$), while the Guo MLE is statistically
+indistinguishable from $T=1$ (paired $t=\calTestTStatWPWPMLE$, $p=\calTestPValWPWPMLE$).
+The proposal's asymptotic-equivalence claim does not survive; ``calibration''
+and ``imprint detection'' are distinct targets.
+
+\begin{table}[h]
+\centering
+\caption{Calibration $\hat\beta$ per estimator (as $\log\hat\beta$;
+$0\Leftrightarrow\hat\beta=1$). The pooled streaming filter and the Guo MLE
+disagree by $\approx 1$ nat.}
+\label{tab:expa-beta}
+\begin{tabular}{lccc}
+\toprule
+corpus & $\log\hat\beta_{\mathrm{stream\_med}}$ & $\log\hat\beta_{\mathrm{stream\_pooled}}$ & $\log\hat\beta_{\mathrm{MLE}}$ \\
+\midrule
+WikiText        & \calLogBetaStreamMedWT & \calLogBetaStreamPooledWT & \calLogBetaMLEWT \\
+WritingPrompts  & \calLogBetaStreamMedWP & \calLogBetaStreamPooledWP & \calLogBetaMLEWP \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\linewidth]{F_cal_2_nll_curve.png}
+\caption{Per-token calibration NLL vs.\ $\log\beta$. The minimum is at
+$\log\beta\approx 0$ (Qwen is calibrated); the pooled streaming filter lands far
+up the steep wall, not at the minimum.}
+\label{fig:expa-nll}
+\end{figure}
+
+\paragraph{Does the sliding filter track genre (Exp B)?}
+With the calibration framing gone, the remaining question is whether a sliding
+$\hat\beta_t$ tracks content transitions at all. On a sequence alternating
+WikiText and WritingPrompts chunks, a fading-memory filter
+($\gamma=0.90$--$0.95$) sees a small genre signal --- the within-chunk mean of
+$\log\hat\beta$ is $\expbGenreGap$ higher on WikiText than WritingPrompts, the
+right sign --- but it is dwarfed by the $\expbEntropyGap$-nat difference in
+pre-decoding entropy between the genres (Table~\ref{tab:expb},
+Fig.~\ref{fig:expb}). With no decay ($\gamma=1$) the filter saturates to its
+pooled-streaming bias ($\log\hat\beta\approx\expbSaturated$) and loses all
+per-context sensitivity. The signal is plausibly content-driven, not a clean
+read of the decoder.
+
+\begin{table}[h]
+\centering
+\caption{Exp B: mean $\log\hat\beta$ per genre (boundary-stripped chunk
+interiors) and mean pre-decoding entropy per genre, by memory decay $\gamma$.}
+\label{tab:expb}
+\input{\tabdir/tab_expb_genre.tex}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\linewidth]{F_mix_1_log_beta_trajectory.png}
+\caption{$\log\hat\beta_t$ over position; background shading is genre. $\gamma=1$
+(grey) drifts to the pooled bias and stops tracking; damped filters oscillate
+weakly with genre.}
+\label{fig:expb}
+\end{figure}
+
+% =====================================================================
+\section{The form of the belief: not a fast entropy read-out}\label{sec:form}
+% =====================================================================
+If the model has a belief about $\beta^{\mathrm{dec}}$, does it show up as
+pre-decoding entropy that snaps to a new sampler within a few dozen tokens? We
+self-generate $150$ tokens at three $\beta^{\mathrm{dec}}$ and read the
+pre-decoding entropy $H(\mathrm{softmax}(\ell_t))$ in a late window. The raw
+effect is enormous: late-window $H$ moves from $\expcLateTwo$ nats at
+$\beta^{\mathrm{dec}}=2.0$ to $\expcLateHalf$ nats at $\beta^{\mathrm{dec}}=0.5$
+--- a paired spread of $\expcSpread$ nats ($t=\expcSpreadT$, all $32$ prompts
+ordering the same way; Table~\ref{tab:expc-late}, Fig.~\ref{fig:expc-traj}).
+
+\begin{table}[h]
+\centering
+\caption{Exp C: late-window ($t\in[80,150)$) pre-decoding entropy by
+$\beta^{\mathrm{dec}}$, with per-prompt paired difference vs.\ $\beta=2.0$.}
+\label{tab:expc-late}
+\input{\tabdir/tab_expc_late.tex}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.85\linewidth]{F_ep_1_entropy_trajectory.png}
+\caption{Median pre-decoding $H(t)$ per condition (IQR shaded). Dashed lines
+mark mean entropies of real natural text; the $\beta=0.5$ trajectory climbs far
+past anything natural.}
+\label{fig:expc-traj}
+\end{figure}
+
+\paragraph{But it is garbage-in, garbage-out --- and the swap control proves it.}
+Natural high-entropy human writing sits far below $9$ nats, and the
+$\beta=0.5$ generations are token salad within $\sim 20$ steps: the entropy
+climbs because each random token makes the context less parseable, not
+(necessarily) because the model believes the decoder is hot. To separate
+decoder-belief from content quality, we hold the prefix's regime fixed and
+\emph{switch} the sampler at step $\expcSwitchStep$. If the belief were a fast
+posterior on recent tokens, switching $0.5\to 1.0$ should pull late entropy back
+to the $\beta=1$ baseline within a handful of tokens. It does not: the
+\texttt{pre05\_post10} condition stays essentially flat, from $\expcSwapPre$
+(pre-switch) to $\expcSwapPostFifty$ ($50$ tokens after the switch;
+Table~\ref{tab:expc-swap}, Fig.~\ref{fig:expc-swap}). Switching $0.5\to 2.0$
+\emph{does} recover coherence, but only because $\beta=2$ forces near-top-1
+selection that re-anchors the context to in-distribution English --- the sampler
+overwriting the bad prefix, not the model updating a belief.
+
+\begin{table}[h]
+\centering
+\caption{Exp C swap control: median pre-decoding $H$ before the switch and at
+offsets after it. The decisive row is \texttt{pre05\_post10}, which does not
+recover.}
+\label{tab:expc-swap}
+\input{\tabdir/tab_expc_swap.tex}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.85\linewidth]{F_ep_5_swap_recovery.png}
+\caption{Median pre-decoding $H$ at offsets after the sampler switch. The orange
+line (\texttt{pre05\_post10}, $0.5\to 1.0$) does not fall: switching to a
+neutral sampler does not restore coherence.}
+\label{fig:expc-swap}
+\end{figure}
+
+\paragraph{What this constrains.} The decisive comparison falsifies the strong
+instantiation in which decoder-belief is a fast entropy read-out. It does
+\emph{not} refute the broader claim --- the blacklist and top-$k$ experiments
+(\S\ref{sec:positive}) give direct positive evidence, and the WritingPrompts
+offset (\S\ref{sec:measure}) shows the model does respond to which tokens its
+context contains. The belief operates on slower, more aggregate features ---
+rank statistics, support shape, blacklist signatures --- not instantaneous
+entropy.
+
+% =====================================================================
+\section{Belief-update dynamics: closed-loop vs.\ invariance}\label{sec:dynamics}
+% =====================================================================
+Finally we ask which $(\gamma,\alpha,p)$ best parameterize the belief dynamics,
+using two complementary criteria. \emph{Closed-loop badness} self-generates
+under the corrected sampler and penalizes a corrector that fails to track
+$\beta^{\mathrm{target}}$. \emph{Belief invariance} teacher-forces the filter on
+a held-out natural-text continuation after a prefix sampled at varying
+$\beta^{\mathrm{prefix}}$, and asks that the corrected per-token cross-entropy be
+\emph{invariant} to the prefix (a well-calibrated corrector should cancel the
+prefix imprint and leave the natural distribution untouched).
+
+The two criteria disagree. By closed-loop badness, full correction wins: the
+default $(\gamma=1,\alpha=1,p=1)$ is best (badness $\bsweepBestBadness$;
+Table~\ref{tab:bsweep}). By invariance, full correction at $\gamma=1$ is
+catastrophic: cross-entropy on $\beta^{\mathrm{prefix}}=0.5$ continuations
+explodes from $\binvCeFloor$ nats at $p=0$ to $\binvCeExplode$ nats at $p=1$
+(near-uniform over the vocabulary), and the only configurations that stay near
+the no-correction floor have $\gamma<1$ (Table~\ref{tab:binv},
+Fig.~\ref{fig:binv}).
+
+\begin{table}[h]
+\centering
+\caption{Closed-loop sweep, top 5 by badness. $H@\beta^{\mathrm{target}}$ and
+$M@\beta^{\mathrm{target}}$ are late-window mean entropy and max-$P_{\text{sample}}$.}
+\label{tab:bsweep}
+\input{\tabdir/tab_bsweep_closed.tex}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Belief-invariance sweep, top 5 by per-prompt CE variance across
+$\beta^{\mathrm{prefix}}$ (lower is better). All $p=0$ configs are identical
+(correction off) and shown as one ``any/any'' row.}
+\label{tab:binv}
+\input{\tabdir/tab_binv_invariance.tex}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\linewidth]{F_bi_2_ce_vs_p.png}
+\caption{Cross-entropy on the natural-text continuation vs.\ correction exponent
+$p$, colored by $\beta^{\mathrm{prefix}}$. At $\gamma=1$ the $\beta=0.5$ curve
+grows explosively with $p$; at $\gamma<1$ all curves stay within $\approx 0.1$
+nat of each other.}
+\label{fig:binv}
+\end{figure}
+
+\paragraph{Resolving the disagreement.} Closed-loop badness is a
+self-consistency illusion: the filter accumulates a biased $\hat\beta$ from the
+corrected sampler's own output, then divides the next logits by that same biased
+$\hat\beta$, so the two biases cancel \emph{inside the loop}. ``The sampler's
+output looks orderly'' is necessary but not sufficient for ``the filter modeled
+the belief.'' Breaking the loop by teacher-forcing on natural text removes the
+cancellation, and the bias appears as enormous cross-entropy. Invariance is the
+more direct criterion, because it grounds the corrector on data the model did
+not generate. Memory decay $\gamma<1$ is the load-bearing parameter: it bounds
+the filter's worst-case bias by the fading window's effective sample size,
+holding the CE variance to $\le\binvVarCap$ nats$^2$ across the entire $p$ range
+(versus the floor $\binvVarFloor$). The evidence weight $\alpha$ matters little.
+A reasonable default for off-temperature generation
+($\sigma_0=\binvSigmaZero$) is moderate decay with partial correction, e.g.\
+$(\gamma=0.95,\,\alpha=1.0,\,p=0.5)$; for natural generation
+($\beta^{\mathrm{target}}=1$) no correction is best, since the model is already
+calibrated.
+
+% =====================================================================
+\section{Limitations and conclusion}
+% =====================================================================
+\paragraph{Limitations.} All results use one model (Qwen-2.5-3B), one
+tokenization, and a small set of corpora; the ``Qwen is well-calibrated''
+finding and the magnitude of the WritingPrompts offset are model- and
+corpus-specific. The imprint is only approximately multiplicative
+($R=\fzeroRfinal$ off-axis), and no scalar-$\beta$ correction can cancel
+non-scalar structure (mode collapse, repetition, vocabulary narrowing); we have
+not measured how much of the prefix imprint is non-scalar. The invariance test
+uses only $\beta^{\mathrm{target}}=1$, the trivially-calibrated case, because
+there is no natural-text ground truth at other targets. Exp C cannot fully
+separate decoder-belief from garbage-in/garbage-out, because $\beta=0.5$
+decoheres the prefix faster than any belief update could compensate.
+
+\paragraph{Conclusion.} Language models do infer features of their own
+decoder from context (blacklists, top-$k$ cliffs, an over-confidence offset on
+out-of-domain text). A streaming Laplace filter that models this as a scalar
+inverse-temperature belief yields a corrector that works in the boredom regime
+and overshoots in the confusion regime. The filter is not online Guo
+temperature scaling --- it has a different fixed point and hurts as a calibrator
+--- and the belief it measures is not a fast entropy read-out but something
+slower and more structural. The right way to tune the corrector is by invariance
+on held-out natural text, not closed-loop stability, and that criterion makes a
+fading memory ($\gamma<1$) essential. The belief-imprint hypothesis is
+sharpened, not refuted; the open theoretical question is a closed-loop
+fixed-point analysis of the coupled $(\beta^{\mathrm{model}}_t,\hat\beta_t)$
+dynamics that would explain the confusion-regime overshoot.
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
+
+\end{document}

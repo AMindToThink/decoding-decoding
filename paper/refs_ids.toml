@@ -1,0 +1,43 @@
+# Source of truth for paper/refs.bib. Each [[cite]] = citation key + ONE
+# identifier + the specific claim the paper makes against it.
+#
+# Regenerate the .bib with:  uv run python scripts/build_bib.py
+# (requires network access to the arXiv API; see paper/CITATIONS.md)
+#
+# Keys are <firstauthor><venueyear><shorttitleword>, matching the first author
+# the metadata resolves to.
+
+[[cite]]
+key   = "basu2021mirostat"
+arxiv = "2007.14966"
+claim = "Mirostat patches decoding-induced entropy drift with a feedback control loop on per-token surprise; the prior work this project extends to context-dependent belief modeling."
+
+[[cite]]
+key   = "guo2017calibration"
+arxiv = "1706.04599"
+claim = "Temperature scaling: post-hoc calibration by a single scalar T fit by NLL (the 'Guo MLE'); the batch calibrator the streaming filter is compared against in Exp A."
+
+[[cite]]
+key   = "liu2024temperature"
+arxiv = "2311.09325"
+claim = "Per-corpus temperature scaling of surprisal improves fit to human reading times; reports T ~ 2.5 on GPT-2 for naturalistic English via grid search."
+
+[[cite]]
+key   = "shen2024thermometer"
+arxiv = "2403.08819"
+claim = "Thermometer: universal LLM calibration that beats global T but requires auxiliary supervised training; the training-based alternative contrasted with our training-free per-context estimator."
+
+[[cite]]
+key   = "mitzenmacher2020algorithms"
+arxiv = "2006.09123"
+claim = "Algorithms-with-predictions framing (course topic): augmenting decisions with possibly-unreliable predictions; conceptual framing for treating the model's inferred decoder as a prediction."
+
+[[cite]]
+key   = "peng2025calibration"
+arxiv = "2504.09096"
+claim = "High-dimensional online calibration in polynomial time; calibration-theory context for online/streaming calibration."
+
+[[cite]]
+key   = "fishelson2025calibration"
+arxiv = "2505.21460"
+claim = "High-dimensional calibration from swap regret; calibration-theory context for high-dimensional calibration."
