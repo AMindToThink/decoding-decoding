@@ -1,0 +1,25 @@
+# Per-position scrutiny of the NO-GO (full runs)
+# scripts/full_sequence_scrutiny_perposition.py on per-model records.jsonl
+
+## gpt2-large (n=800)
+T=0.5 n=800 D_total=0.2219 mean_best_T_kl=0.1476 fracBestT=0.335
+per_pos_quadratic_logit: mean_incr_over_bestT=-0.02539 as_frac_of_D=-0.114  (R2_quad mean=0.062)
+per_pos_free8bin_logit:  mean_incr_over_bestT=-0.05777 as_frac_of_D=-0.260  (in-sample upper bound)
+per_pos_spearman(c, logit): mean=+0.003  median=-0.000  frac|rho|>0.3=0.11
+
+T=0.7 n=800 D_total=0.0757 mean_best_T_kl=0.0563 fracBestT=0.256
+per_pos_quadratic_logit: mean_incr_over_bestT=-0.00354 as_frac_of_D=-0.047  (R2_quad mean=0.063)
+per_pos_free8bin_logit:  mean_incr_over_bestT=-0.01266 as_frac_of_D=-0.167  (in-sample upper bound)
+per_pos_spearman(c, logit): mean=+0.001  median=-0.002  frac|rho|>0.3=0.11
+
+## Qwen2.5-3B (n=600)
+T=0.5 n=600 D_total=0.1420 mean_best_T_kl=0.1002 fracBestT=0.294
+per_pos_quadratic_logit: mean_incr_over_bestT=-0.02163 as_frac_of_D=-0.152  (R2_quad mean=0.058)
+per_pos_free8bin_logit:  mean_incr_over_bestT=-0.03557 as_frac_of_D=-0.251  (in-sample upper bound)
+per_pos_spearman(c, logit): mean=+0.049  median=+0.049  frac|rho|>0.3=0.11
+
+T=0.7 n=600 D_total=0.0484 mean_best_T_kl=0.0375 fracBestT=0.225
+per_pos_quadratic_logit: mean_incr_over_bestT=-0.00382 as_frac_of_D=-0.079  (R2_quad mean=0.060)
+per_pos_free8bin_logit:  mean_incr_over_bestT=-0.00758 as_frac_of_D=-0.157  (in-sample upper bound)
+per_pos_spearman(c, logit): mean=+0.052  median=+0.046  frac|rho|>0.3=0.12
+
