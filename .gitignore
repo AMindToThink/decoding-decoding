@@ -12,8 +12,19 @@ data/run_metadata.parquet
 data/run_metadata.legacy.parquet
 data/manifest.parquet
 data/traces/
+data/sparse_logits/
 data/config.json
 data/logs/
+data/counter_decode/
+data/counter_decode_sigma_sweep/
+data/counter_decode_extreme/
+data/counter_decode_tight_prior/
+data/counter_decode_priors/
+data/counter_decode_fuzzy/
+data/counter_decode_tight_prior/
+data/counter_decode_entropy_stability/
+data/counter_decode_shape/
+data/natural_text_filter/
 results/
 
 # Editor-local Claude config / scratch

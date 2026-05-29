@@ -1,0 +1,43 @@
+\documentclass[11pt]{article}
+\usepackage[top=0.5in,bottom=0.5in,left=0.8in,right=0.8in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{1pt plus 1pt minus 0.5pt}
+\setlist{itemsep=1pt,parsep=1pt,topsep=2pt}
+
+\title{\vspace{-3.5em}Modeling and Calibrating: LLMs Figure out their Decoding Process}
+\author{Matthew Khoriaty}
+\date{Project proposal, Reliable ML with Unreliable Black Boxes, May 12, 2026}
+
+\begin{document}
+\maketitle
+\vspace{-3em}
+\enlargethispage{2\baselineskip}
+
+\paragraph{Background.}
+An autoregressive language model emits, at each step, a probability distribution over next tokens given the prefix so far.
+\emph{Decoding} is the choice of how to sample from that distribution. Temperature scaling, top-$k$, top-$p$ all act by sharpening or flattening the model's distribution before drawing the next token.
+The inspiration for this project came from wondering what a language model thinks about its own decoding process. Language models are trained for text prediction, not generation, and they would naturally aim to model their own generation process.
+One thing that I expect to find and have begun to validate is that language models form a belief about their own decoding parameters by conditioning on the text that they have generated so far. If you sample from a language model at temperature $.8$, it will notice that the text is low-entropy and adjust its own output probabilities to match. This creates a feedback loop. The low-temperature sampled tokens condition the model to think that the text is low-temperature, which sharpens its probability distribution, and then the low temperature scaling is applied on top of that. 
+Existing work such as Mirostat~[Basu21] documented this effect and patched it with a control loop on aggregate per-token surprise. Mirostat's fix fails to properly adjust to the context because sometimes low/high-entropy text is desirable within a response. 
+More interesting to me is the broader question of modeling what LLMs believe about their own decoding parameters. It appears to me that this is an open research field, and it has potential implications for model welfare and the effective and predictable elicitation of capabilities from models. 
+
+\paragraph{What I have figured out so far.}
+I have accumulated some evidence that models infer their decoding parameters. Most cleanly, models learn their own blacklist (tokens set to zero probability by the decoder) if the tokens are common enough. Additionally, as sequence position $t$ increases, if the decoding process reduces entropy (top-k, temperature $< 1$), then the model will concentrate probability on its most probable tokens, and vice versa for decoding processes that increase entropy.
+I have developed a streaming Bayesian estimator for the model's inferred $1/T$. At each step the filter observes the pre-decoding logits $\ell_t \in \mathbb{R}^V$ and the sampled token $x_t$, and updates the posterior on $\log(1/T)$. Assuming the model and filter share the same prior on $1/T$ and that the model performs perfect Bayesian reasoning, the estimate recovers the model's inferred $1/T$ at every step by induction. If the imprint on the logits is a single scalar rescaling, dividing the user's target by the streaming estimate yields a corrector that pins the effective sampling distribution to target.
+In an empirical sweep, the corrector pins the effective $1/T$ when target $> 1$: the corrector ratio settles near $1$, as predicted. When target $< 1$, it \textbf{overshoots}. This merits further analysis and investigation.
+
+\paragraph{Where I would love guidance and connections to course ideas and the calibration literature.}
+I am interested to hear your thoughts on what experiments you think would be promising and what mathematical directions you expect to bear fruit. 
+
+Are there any connections to course material I am missing? For example, would it be possible to avoid assuming a prior and infer the model's temperature using distribution-free techniques?
+
+The project treats the model as a black box: it characterizes behavior using only input (prompt and generated tokens) and output (next-token distributions), and corrects for the bias the model applies when it infers the decoder. The streaming Bayesian filter is online temperature scaling [Guo17] converging in the large-data limit to the same global $T$ Guo's batch MLE fits, or that [Liu24] finds by per-corpus grid search on GPT-2 ($T\!\approx\!2.5$ on naturalistic English). Unlike modern alternatives like Thermometer [Shen24] that beat global $T$ but require auxiliary supervised training, this estimator is training-free and per-context, which lets the project ask what those works do not: at each step, what might the model's outputs tell us about what it implicitly `believes' about the decoder?
+
+{\footnotesize\sloppy
+\noindent\textbf{References.}\ \,[Basu21] Basu et al., \emph{Mirostat}, ICLR'21, \url{arxiv.org/abs/2007.14966}; [MV20] Mitzenmacher \& Vassilvitskii, \emph{Algorithms with Predictions}, BWCA'20, \url{arxiv.org/abs/2006.09123}; [Pen25] \url{arxiv.org/abs/2504.09096}; [FGMS25] \url{arxiv.org/abs/2505.21460} (high-dim.\ calibration); [Guo17] Guo et al., \emph{On Calibration of Modern Neural Networks}, ICML'17, \url{arxiv.org/abs/1706.04599}; [Liu24] Liu, \v{S}krjanec \& Demberg, \emph{Temperature-scaling surprisal estimates improve fit to human reading times}, ACL'24, \url{arxiv.org/abs/2311.09325}; [Shen24] Shen et al., \emph{Thermometer: universal calibration for LLMs}, ICML'24, \url{arxiv.org/abs/2403.08819}.
+\par}
+
+\end{document}

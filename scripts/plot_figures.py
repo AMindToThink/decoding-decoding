@@ -11,6 +11,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.colors import PowerNorm
 
 from decoding_decoding.analyze import (
     CONDITIONS,
@@ -86,32 +87,50 @@ def fig1_main_effect(data: dict, out_path: Path) -> None:
 
 def fig2_cliff_heatmap(data: dict, out_path: Path) -> None:
     """δ_r over (rank r, position i) as a heatmap, one panel per condition.
-    A bright horizontal stripe at r = K is the H3 visual signature."""
+    A bright horizontal stripe at r = K is the H3 visual signature.
+
+    Panels share a single colorbar with global vmin/vmax so brightness is
+    directly comparable across conditions."""
     ranks = np.arange(1, 51)
-    fig, axes = plt.subplots(1, 4, figsize=(18, 4.2), sharey=True)
-    for ax, k in zip(axes, CONDITIONS):
+
+    # First pass: compute per-rank means for every condition and find the
+    # global value range, so all panels share one color scale.
+    per_rank_by_k: dict[str, np.ndarray] = {}
+    for k in CONDITIONS:
         cd = data[k]
-        # cliff at each rank: shape (len(ranks), n_prompts, n_runs, L) → mean to (len(ranks), L)
-        per_rank_means = np.stack(
+        per_rank_by_k[k] = np.stack(
             [_cliff_arr_per_run(cd.top_logprobs, r).mean(axis=(0, 1)) for r in ranks],
             axis=0,
         )
-        im = ax.imshow(
+    vmin = float(min(arr.min() for arr in per_rank_by_k.values()))
+    vmax = float(max(arr.max() for arr in per_rank_by_k.values()))
+
+    # Power-norm with gamma < 1 compresses the high end (the large r=1 cliff
+    # at k=1 would otherwise saturate the colormap and hide the smaller stripes
+    # at r=K). vmin clamped to >=0 because PowerNorm rejects negatives.
+    norm = PowerNorm(gamma=0.4, vmin=max(vmin, 0.0), vmax=vmax)
+
+    fig, axes = plt.subplots(1, 4, figsize=(18, 4.2), sharey=True, constrained_layout=True)
+    last_im = None
+    for ax, k in zip(axes, CONDITIONS):
+        per_rank_means = per_rank_by_k[k]
+        last_im = ax.imshow(
             per_rank_means,
             aspect="auto",
             origin="lower",
             extent=(0, per_rank_means.shape[1], ranks[0] - 0.5, ranks[-1] + 0.5),
             cmap="viridis",
+            norm=norm,
         )
         if k != "inf":
             ax.axhline(int(k), color="red", lw=0.8, ls="--", alpha=0.7)
-        ax.set_title(f"top-k = {k}")
+        title_k = "∞" if k == "inf" else k
+        ax.set_title(f"top-k = {title_k}")
         ax.set_xlabel("position")
         if ax is axes[0]:
             ax.set_ylabel("evaluation rank r")
-        fig.colorbar(im, ax=ax, fraction=0.045, label="δ_r (nats)" if ax is axes[-1] else "")
-    fig.suptitle("Fig 2. Cliff δ_r at every rank, faceted by sampling condition", y=1.02)
-    fig.tight_layout()
+    fig.colorbar(last_im, ax=axes, fraction=0.025, label="δ_r (nats)")
+    fig.suptitle("Fig 2. Cliff δ_r at every rank, faceted by sampling condition")
     fig.savefig(out_path, bbox_inches="tight", dpi=150)
     plt.close(fig)
     print(f"  wrote {out_path}")
@@ -319,9 +338,20 @@ def fig5_forest(data: dict, out_path: Path, late_start: int = 500) -> None:
             xerr=[[p - lo], [hi - p]],
             fmt="o", color="C0", capsize=4, lw=1.5,
         )
-        ax.text(p, y + 0.18, f"{p:+.3f} [{lo:+.3f}, {hi:+.3f}]", ha="center", fontsize=8)
+        # Place the value label below the marker via pixel-offset annotation, so
+        # it stays clear of the suptitle on the topmost row regardless of axis range.
+        ax.annotate(
+            f"{p:+.3f} [{lo:+.3f}, {hi:+.3f}]",
+            xy=(p, y),
+            xytext=(0, -12),
+            textcoords="offset points",
+            ha="center",
+            va="top",
+            fontsize=8,
+        )
     ax.axvline(0, color="black", lw=0.8)
     ax.set_yticks(ys)
+    ax.set_ylim(ys.min() - 0.6, ys.max() + 0.4)
     ax.set_yticklabels([f"top-k = {r[0]}, rank = {r[0]}" for r in rows])
     ax.set_xlabel("(treatment − control) cliff δ_K at late positions (nats)")
     ax.set_title(f"Fig 5. Effect-size forest — late positions ≥ {late_start}, 95% CI")

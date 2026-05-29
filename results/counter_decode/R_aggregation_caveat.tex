@@ -1,0 +1,197 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{parskip}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\newcommand{\Rt}{R(t)}
+\newcommand{\lstar}{\ell^{*}}
+\newcommand{\bhat}{\hat\beta}
+\newcommand{\bbar}{\bar\beta}
+
+\title{Does the global SVD test in F1.1 measure what we want?}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{The question}
+
+Aggregating logits across prompts before doing SVD might flatten prompt-specific structure into a common, easier-to-fit direction.
+If so, the off-axis residual fraction \(\Rt\) reported in F1.1 could understate the failure of per-trajectory multiplicativity,
+and the SVD-recovered \(\bbar(k,t)\) shown in F1.2-svd could be tracking the wrong axis entirely.
+
+This note works through what global \(\Rt\) actually measures, where it can be fooled, and what the cheapest fix would be.
+
+\section{The framework claim, written per-trajectory}
+
+The imprint assumption is per-prompt:
+\[
+\ell_t^{(n,k)} \;=\; \beta_{\text{model}}^{(n,k,t)} \cdot \lstar^{(n)}_t,
+\]
+for trajectory \(n\), decoder index \(k\), step \(t\),
+with \(\lstar^{(n)}_t\) the prompt-specific ``natural'' logit direction.
+That is the claim we want to test.
+
+\section{What F1.1 actually computes}
+
+Global \(\Rt\) averages first and tests after:
+\[
+\bar\ell_t(k) \;=\; \frac{1}{N}\sum_{n=1}^{N} \beta_{\text{model}}^{(n,k,t)} \cdot \lstar^{(n)}_t,
+\qquad
+M_t \;=\; \bigl[\,\widetilde{\bar\ell}_t(1)\,\bigl|\,\dots\,\bigl|\,\widetilde{\bar\ell}_t(K)\,\bigr],
+\]
+\[
+M_t \;=\; U\Sigma V^\top, \qquad \Rt \;=\; \frac{\sum_{i\geq 2}\sigma_i^2}{\sum_i \sigma_i^2}.
+\]
+\(\Rt=0\) means the \(K\) \emph{averaged} columns lie on a one-dimensional ray.
+That is \emph{necessary} for per-trajectory multiplicativity but not \emph{sufficient}.
+Two failure modes hide in the gap.
+
+\section{Failure mode 1: zero-mean deviations cancel under averaging}
+
+Suppose the real per-trajectory imprint has a quadratic kicker,
+\[
+\ell_t^{(n,k)} \;=\; \beta_k\,\lstar^{(n)}_t \;+\; \beta_k^2\,\eta^{(n)},
+\qquad \eta^{(n)} \;\sim\; \text{i.i.d., zero-mean over prompts.}
+\]
+Per-prompt, the imprint is non-multiplicative.
+But the aggregate kicker washes out,
+\[
+\bar\ell_t(k) \;=\; \beta_k \cdot \underbrace{\tfrac{1}{N}\!\sum_n \lstar^{(n)}_t}_{\mu_t}
+\;+\; \beta_k^2 \cdot \underbrace{\tfrac{1}{N}\!\sum_n \eta^{(n)}}_{\to\, 0}
+\;\approx\; \beta_k\cdot\mu_t.
+\]
+So \(M_t\) is rank-1, \(\Rt\approx 0\), and the global test \emph{certifies multiplicativity that isn't there.}
+This is the case the plan's html already flagged:
+\emph{``Path-dependent off-axis structure that is zero-mean across trajectories cancels in the averaged test.''}
+
+\section{Failure mode 2: the principal direction picks up shared content}
+
+The deeper concern.
+Different prompts have different \(\lstar^{(n)}_t\), but they share statistical structure ---
+common-token directions (``the'', ``of'', ``and'', \dots) get systematically larger logits across most natural English contexts.
+Call that shared direction \(\mu_t^{\text{avg}}\).
+When we average over \(N\) prompts,
+\[
+\bar\ell_t(k) \;\approx\; \beta_k \cdot \mu_t^{\text{avg}} \;+\; (\text{prompt-specific terms, smaller in } N).
+\]
+The SVD's principal left singular vector \(u_1\) lines up with \(\mu_t^{\text{avg}}\),
+not with any single \(\lstar^{(n)}_t\).
+Then
+\[
+\bbar(k,t) \;=\; \sigma_1 \cdot v_{1k}
+\]
+measures how much each \(\beta_k\)-column projects onto the \emph{average-natural} direction.
+That projection can track \(\beta_k\) closely even if per-prompt imprints are doing weirder things,
+as long as those weird things don't share a direction across prompts.
+
+This is consistent with what F1.2-svd shows.
+The SVD-recovered \(\log\bbar\) spans only \([-1.1,\,-0.2]\) at \(t=199\),
+while the streaming \(\log\bhat\) (F1.2) spans \([-4.7,\,+1.1]\).
+The SVD is finding a flatter, content-averaged direction;
+the streaming estimator is responding to something prompt-specific.
+They disagree because they are measuring different things, not because one is buggy.
+
+\section{So what does \(\Rt\) measure?}
+
+The \emph{consistent-across-prompts} off-axis structure.
+The observed \(\Rt[199]\approx 0.155\) (F1.1) means that even after averaging out prompt-specific quirks,
+roughly 15\% of the cross-decoder variance does not fit a single principal direction.
+That is a real positive finding --- consistent non-multiplicativity exists.
+
+But \(\Rt\) is a \emph{lower bound} on per-trajectory off-axis residual:
+\begin{itemize}[leftmargin=2em]
+\item \(\Rt > 0\) \(\Rightarrow\) consistent (across prompts) non-multiplicativity.
+\item \(\Rt \approx 0\) \(\Rightarrow\) consistent with per-prompt multiplicativity \emph{or} with wildly non-multiplicative per-prompt imprints that happen to be zero-mean across prompts. Inconclusive.
+\end{itemize}
+
+\section{Why per-prompt R is too noisy to break the tie}
+
+The plan anticipates this and defines a per-prompt SVD (F1.4).
+For each prompt \(p\), average just that prompt's \(N=3\) runs, form \(M_t^{(p)} \in \mathbb{R}^{V\times K}\), and compute \(R^{(p)}(t)\).
+With the imprint exactly multiplicative per-prompt, \(M_t^{(p)}\) is rank-1 and \(R^{(p)}(t) = 0\).
+
+Sampling-noise floor for this estimator.
+Model
+\[
+\ell_t^{(n,k)} \;=\; \beta_k\,\lstar^{(n)}_t \;+\; \varepsilon_t^{(n,k)},
+\qquad \varepsilon_t^{(n,k)} \;\sim\; \text{i.i.d., per-entry variance } \sigma^2,
+\]
+and average over \(N\) runs at fixed prompt.
+The K-column matrix \(M_t^{(p)}\) has signal Frobenius-squared \(\|\widetilde{\lstar}\|^2\,\|\beta\|^2\)
+and noise Frobenius-squared \(V K \sigma^2 / N\).
+SVD's top singular value captures the signal; the remaining \(K-1\) singular values capture the orthogonal noise.
+Assuming \(\sigma \approx \sigma_\ell\)
+(per-trajectory variance comparable to the natural logit magnitude, since both come from the same model on similar prefixes),
+\[
+\mathbb{E}\bigl[R^{(p)}\bigr]
+\;\approx\;
+\frac{(K-1)/N}{\|\beta\|^2 + K/N}.
+\]
+With \(K=6\), \(N=3\), and \(\|\beta\|^2 = \sum_k \beta_k^2 \approx 10\) (for the sweep \(\{0.5,0.7,1.0,1.3,1.7,2.0\}\)),
+\[
+\mathbb{E}\bigl[R^{(p)}\bigr]
+\;\approx\;
+\frac{5/3}{10 + 2}
+\;\approx\;
+0.14.
+\]
+The observed gap between per-prompt and global in F1.4 is \(\approx 0.32 - 0.16 = 0.16\),
+so the bulk of the per-prompt curve is finite-\(N\) noise.
+With \(N=3\) we cannot distinguish ``consistent + per-prompt noise'' from ``consistent + per-prompt failure.''
+
+For the global estimator with \(N=96\) trajectories the same calculation gives
+\[
+\mathbb{E}\bigl[R^{\text{global}}\bigr]
+\;\approx\;
+\frac{5/96}{10 + 6/96}
+\;\approx\;
+0.005,
+\]
+so the global noise floor is \(\sim 0.5\%\) and the observed \(\Rt[199]\approx 0.155\) is genuine signal ---
+but, again, only of the consistent-across-prompts component.
+
+\section{What would actually test what we want}
+
+\begin{enumerate}[leftmargin=2em]
+\item \textbf{More runs per prompt.}
+Bumping to \(N=30\) drops the per-prompt noise floor to \(\approx 0.02\) and makes F1.4 the direct test.
+Cost: \(10\times\) GPU on the existing layout.
+
+\item \textbf{Toy validation with controlled \(\lstar\).}
+A single deterministic-context setting on actual transformer logits, so aggregation across prompts isn't a confound.
+The walkthrough's analytic toy already does this for the corrector;
+a logit-level toy would close the gap for the SVD test specifically.
+
+\item \textbf{Decompose \(\Rt\) into shared vs.\ prompt-specific.}
+Project each per-prompt \(u_1^{(p)}\) onto the global \(u_1\) and look at the distribution.
+If the projections are all \(\approx 1\), the global SVD is finding the right direction.
+If they spread, the global \(u_1\) is the wrong axis and the F1.2-svd compression is a pure aggregation artifact.
+\end{enumerate}
+
+\section{Why F2 is mostly unaffected}
+
+F2.1 and F2.2 compare the streaming \(\bhat_t\) against the SVD-recovered \(\bbar_t\).
+The streaming estimator is computed per-trajectory and only averaged \emph{after} taking logarithms,
+so it is not subject to the directional-aggregation failure mode.
+The gap shown in F2.1 (growing with \(t\), anti-symmetric in \(\log\beta_{\text{dec}}\)) is real evidence
+that the model is not Bayes-optimal under the assumed prior,
+independent of whatever the global SVD's \(\bbar\) is doing.
+So even if F1.1 and F1.2-svd require caveats,
+F2's headline ``calibration gap grows with \(t\)'' is solid.
+
+\section{Bottom line}
+
+F1.1 is honest about \emph{consistent-across-prompts} structure:
+\(\Rt[199] \approx 0.155\) is genuine non-multiplicativity.
+But it cannot rule out larger, prompt-specific failures,
+and the SVD's recovered \(\bbar\) is biased toward a content-averaged direction
+that does not reflect any single prompt's natural axis.
+The per-prompt SVD (F1.4) is the right test,
+but at \(N=3\) runs/prompt it is dominated by finite-sample noise.
+Cheapest path to a definitive answer: rerun with \(N\geq 30\).
+
+\end{document}
