@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.30)  13 MAY 2026 06:36
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.3.30)  13 MAY 2026 07:45
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -365,22 +365,29 @@ LaTeX Warning: `h' float specifier changed to `ht'.
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
-Package rerunfilecheck Info: File `findings.out' has not changed.
-(rerunfilecheck)             Checksum: 49BA631510846343860659801CC9FF6B;635.
+
+
+Package rerunfilecheck Warning: File `findings.out' has changed.
+(rerunfilecheck)                Rerun to get outlines right
+(rerunfilecheck)                or use package `bookmark'.
+
+Package rerunfilecheck Info: Checksums for `findings.out':
+(rerunfilecheck)             Before: 49BA631510846343860659801CC9FF6B;635
+(rerunfilecheck)             After:  270F2F9DBEDE2F2B401CD9893DA85EDB;889.
  ) 
 Here is how much of TeX's memory you used:
- 9987 strings out of 469515
- 151955 string characters out of 5469773
+ 9990 strings out of 469515
+ 151990 string characters out of 5469773
  570966 words of memory out of 5000000
- 38508 multiletter control sequences out of 15000+600000
- 637804 words of font info for 79 fonts, out of 8000000 for 9000
+ 38509 multiletter control sequences out of 15000+600000
+ 638163 words of font info for 80 fonts, out of 8000000 for 9000
  14 hyphenation exceptions out of 8191
  69i,11n,79p,522b,557s stack positions out of 10000i,1000n,20000p,200000b,200000s
- </home/cs29824/.TinyTeX/texmf-var/fonts/pk/ljfour/jknappen/ec/tcrm1095.600pk></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmitt10.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi12.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb>
-Output written on findings.pdf (5 pages, 496513 bytes).
+ </home/cs29824/.TinyTeX/texmf-var/fonts/pk/ljfour/jknappen/ec/tcrm1095.600pk></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmbxti10.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmitt10.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi12.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi8.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr12.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr17.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmti10.pfb></home/cs29824/.TinyTeX/texmf-dist/fonts/type1/public/amsfonts/cm/cmtt10.pfb>
+Output written on findings.pdf (5 pages, 519056 bytes).
 PDF statistics:
- 147 PDF objects out of 1000 (max. 8388607)
- 105 compressed objects within 2 object streams
- 22 named destinations out of 1000 (max. 500000)
+ 158 PDF objects out of 1000 (max. 8388607)
+ 112 compressed objects within 2 object streams
+ 23 named destinations out of 1000 (max. 500000)
  64 words of extra memory for PDF output out of 10000 (max. 10000000)
 

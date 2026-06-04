@@ -213,7 +213,9 @@ def main() -> None:
     model, tok = load_model_and_tokenizer()
 
     # Load natural-text continuations: each passage gives prompt + ground-truth continuation.
-    min_tokens = args.prompt_tokens + args.cont_len + 50
+    # We slice [prompt_tokens : prompt_tokens+prefix_len+cont_len], so min_tokens
+    # must include all three plus a safety buffer.
+    min_tokens = args.prompt_tokens + args.prefix_len + args.cont_len + 50
     if args.corpus == "writingprompts":
         passages = load_writingprompts_passages(
             n=args.n_prompts, min_tokens=min_tokens, tokenizer=tok, seed=args.seed

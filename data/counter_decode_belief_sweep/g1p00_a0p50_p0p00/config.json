@@ -1,0 +1,27 @@
+{
+  "model": "Qwen/Qwen2.5-3B",
+  "family": "counter_decode",
+  "beta_target_values": [
+    0.5,
+    1.0,
+    2.0
+  ],
+  "corrected_arms": [
+    true
+  ],
+  "n_runs_per_prompt": 1,
+  "max_tokens": 200,
+  "sigma_0": 0.2,
+  "sparse_positions": [
+    0,
+    199
+  ],
+  "top_n": 200,
+  "n_prompts": 32,
+  "prompts_sha256": "964011271711330d75f94ed0fca611bad32484272bfe4f5a6f0d250c4cb98a08",
+  "prior_kind": "lognormal_laplace",
+  "prior_kwargs": {},
+  "evidence_weight": 0.5,
+  "memory_decay": 1.0,
+  "correction_exponent": 0.0
+}
