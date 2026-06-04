@@ -528,9 +528,95 @@ def run_survey(args, model, tokenizer) -> dict:
     return summary
 
 
+# ---------------------------------------------------------------------------
+# Part 2 — within-passage-CV heterogeneity gate (+ faithful adaptive)
+# ---------------------------------------------------------------------------
+
+
+def pertoken_oracle_nll(*, logits_arr, tokens, n_grid=41):
+    """Min over a log-spaced τ-grid of per-token NLL (the absolute ceiling for ANY
+    temperature scheme; in-sample per token). Returns (n, m) float64."""
+    taus = np.exp(np.linspace(-1.5, 1.5, n_grid))
+    best = None
+    for tau in taus:
+        nll = per_token_nll(logits_arr=logits_arr, tokens=tokens, tau=float(tau))
+        best = nll if best is None else np.minimum(best, nll)
+    return best
+
+
+def run_gate(args, model, tokenizer) -> dict:
+    """Within-passage cross-validated heterogeneity gate (the critic's leak-free design).
+
+    Split each passage in half. Fit a per-passage temperature on the FIRST half, score
+    the SECOND half — compare to a single global temperature (fit on the first halves,
+    pooled). If per-passage ≈ global, there is no exploitable across-passage temperature
+    heterogeneity. Also report the per-token oracle (ceiling) and the faithful filter's
+    causal adaptive NLL on the second half. All gains are relative to the global T
+    (positive = beats global)."""
+    from decoding_decoding.counter_decode import laplace_update_faithful
+
+    device, L, w = args.device, args.length, args.warmup
+    summary = {"config": {"datasets": list(args.datasets), "n": args.n_gate,
+                          "length": L, "warmup": w, "sigma_0": args.sigma0}, "by_dataset": {}}
+    for key in args.datasets:
+        t0 = time.time()
+        ids = load_survey_ids(key=key, n=args.n_gate, length=L, tokenizer=tokenizer, seed=args.seed)
+        Lw, Tw = forward_window(model=model, ids=ids, warmup=w, device=device, batch=args.batch)
+        n, U = Tw.shape
+        half = U // 2
+        sec_l, sec_t = Lw[:, half:, :], Tw[:, half:]
+
+        beta_global = pooled_mle_beta(logits_arr=Lw[:, :half, :], tokens=Tw[:, :half])
+        nll_global = per_token_nll(logits_arr=sec_l, tokens=sec_t, tau=beta_global).mean(axis=1)
+
+        nll_cv = np.empty(n)
+        betas_pp = np.empty(n)
+        for i in range(n):
+            bi = pooled_mle_beta(logits_arr=Lw[i : i + 1, :half, :], tokens=Tw[i : i + 1, :half])
+            betas_pp[i] = bi
+            nll_cv[i] = per_token_nll(logits_arr=sec_l[i : i + 1], tokens=sec_t[i : i + 1], tau=bi).mean()
+
+        nll_tok = pertoken_oracle_nll(logits_arr=sec_l, tokens=sec_t).mean(axis=1)
+
+        lb_faith, _ = run_filter_trajectory(
+            logits_arr=Lw, tokens=Tw, update_fn=laplace_update_faithful,
+            sigma_0=args.sigma0, device=device,
+        )
+        tau_faith = torch.from_numpy(np.exp(lb_faith[:, half:])).to(device)
+        nll_faith = per_token_nll(logits_arr=sec_l, tokens=sec_t, tau=tau_faith).mean(axis=1)
+
+        def gain(better):  # mean(global - better) over passages; +mean = beats global
+            tt = stats.ttest_rel(nll_global, better)
+            return {"mean": float((nll_global - better).mean()), "t": float(tt.statistic), "p": float(tt.pvalue)}
+
+        summary["by_dataset"][key] = {
+            "n": n, "half_tokens": half, "beta_global": beta_global,
+            "perpassage_beta_std": float(betas_pp.std()),
+            "nll_global_mean": float(nll_global.mean()),
+            "nll_perpassage_cv_mean": float(nll_cv.mean()),
+            "nll_pertoken_oracle_mean": float(nll_tok.mean()),
+            "nll_faithful_adaptive_mean": float(nll_faith.mean()),
+            "perpassage_cv_gain_over_global": gain(nll_cv),
+            "pertoken_oracle_gain_over_global": gain(nll_tok),
+            "faithful_adaptive_gain_over_global": gain(nll_faith),
+        }
+        s = summary["by_dataset"][key]
+        print(
+            f"[gate] {key:18s} β_global={beta_global:.3f} β_pp std={betas_pp.std():.3f} | "
+            f"gain vs global (nats): per-passage-CV={s['perpassage_cv_gain_over_global']['mean']:+.4f} "
+            f"(t={s['perpassage_cv_gain_over_global']['t']:+.1f}) | "
+            f"per-token-oracle={s['pertoken_oracle_gain_over_global']['mean']:+.4f} | "
+            f"faithful-adaptive={s['faithful_adaptive_gain_over_global']['mean']:+.4f} "
+            f"(t={s['faithful_adaptive_gain_over_global']['t']:+.1f}) | {time.time()-t0:.1f}s"
+        )
+        del Lw, Tw, tau_faith
+        torch.cuda.empty_cache()
+    return summary
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--part", choices=["recovery", "survey"], default="recovery")
+    p.add_argument("--part", choices=["recovery", "survey", "gate"], default="recovery")
     p.add_argument("--temps", type=float, nargs="+", default=[0.5, 0.7, 1.0, 1.5, 2.0])
     p.add_argument("--n-seq", type=int, default=64)
     p.add_argument("--seed-len", type=int, default=24)
@@ -545,6 +631,7 @@ def main() -> None:
     ])
     p.add_argument("--n-train", type=int, default=80)
     p.add_argument("--n-test", type=int, default=80)
+    p.add_argument("--n-gate", type=int, default=120)
     p.add_argument("--batch", type=int, default=16)
     p.add_argument("--cuda-device", type=str, default="0")
     p.add_argument("--device", type=str, default="cuda")
@@ -569,6 +656,10 @@ def main() -> None:
         (RESULTS_OUT / "survey.json").write_text(json.dumps(summary, indent=2))
         print(f"[self-cal] wrote {RESULTS_OUT / 'survey.json'}")
         print(f"[self-cal] ranked by global-T gain: {summary['ranked_by_gain']}")
+    elif args.part == "gate":
+        summary = run_gate(args, model, tok)
+        (RESULTS_OUT / "gate.json").write_text(json.dumps(summary, indent=2))
+        print(f"[self-cal] wrote {RESULTS_OUT / 'gate.json'}")
 
 
 if __name__ == "__main__":

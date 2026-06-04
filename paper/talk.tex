@@ -1,0 +1,121 @@
+% 5-minute talk — see slideshow_plans.md. Built with the existing TinyTeX/latexmk
+% toolchain (beamer installed via tlmgr). Numbers come from the script-generated
+% macros (\input paper_macros.tex); figures are the generated PNGs. Build:
+%   latexmk -pdf talk.tex
+\documentclass[aspectratio=169]{beamer}
+\usetheme{Madrid}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\graphicspath{{../results/counter_decode/self_calibration/}}
+\input{../results/tables/paper_macros.tex}   % script-sourced numbers; never hand-typed
+
+\title[LLMs figure out their decoder]{Modeling and Calibrating:\\ LLMs Figure out their Decoding Process}
+\author{Matthew Khoriaty}
+\institute{Reliable ML with Unreliable Black Boxes}
+\date{\today}
+
+\begin{document}
+
+\frame{\titlepage}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{The question}
+  \begin{itemize}
+    \item An autoregressive LM is trained to \emph{predict} text --- so when it
+      \emph{generates}, it has an incentive to model its own \textbf{decoder}
+      (temperature, top-$k$, \dots).
+    \item Two questions: \textbf{(a)} does it? \quad \textbf{(b)} can we use that to
+      predict better?
+  \end{itemize}
+  \vfill
+  \begin{block}{}
+    \centering Can a model read the \emph{temperature} of the text in front of it,
+    and recalibrate itself?
+  \end{block}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{The tool: a streaming Bayesian filter on $\log\beta$}
+  \begin{itemize}
+    \item A Laplace filter maintains a posterior on $\eta=\log\beta$
+      (inverse-temperature), updated \emph{per token} from the prefix ---
+      online, causal, training-free. $\hat\beta_t$ depends only on $x_{<t}$.
+    \item Each token is a Newton / Fisher-scoring step on
+      $P(x\mid\eta)=\mathrm{softmax}(e^{\eta}\ell)[x]$.
+    \item \textbf{Fix (this work):} the production filter linearises at $\beta=1$ and is
+      \emph{inconsistent}. The \emph{faithful} filter re-linearises at the running
+      $\hat\beta$, with the correct $\beta,\beta^{2}$ chain-rule terms.
+  \end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{Two honest negatives (clearing the ground)}
+  \begin{itemize}
+    \item \textbf{Closed-loop correction self-neutralises.} Feeding $\hat\beta$ back into
+      the sampler drives $\beta_{\mathrm{dec}}\to1$ --- the temperature is quietly thrown
+      away. Confirmed across exact-grid filters (not an approximation artifact).
+    \item \textbf{Real creative writing is already calibrated.} The best single
+      temperature gives a non-significant fraction-of-a-nat gain --- nothing to fix.
+  \end{itemize}
+  \vfill
+  \centering\emph{So: to show self-calibration works, test where the temperature is
+  \textbf{known} and there is something to recover.}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{Claim 1: recovering a \emph{known} decoder temperature}
+  \footnotesize Generate Qwen-2.5-3B self-text at a known $\beta=1/T$
+  ($\scNseq$ sequences per $T$); run the filter causally over it.
+  \begin{columns}[T]
+    \column{0.52\textwidth}
+      \includegraphics[width=\linewidth]{F_selfcal_recovery.png}
+    \column{0.48\textwidth}
+      \includegraphics[width=\linewidth]{F_selfcal_nll_gain.png}
+  \end{columns}
+  \vspace{0.3em}
+  \footnotesize
+  \begin{itemize}
+    \item \textbf{Recovery:} faithful $\hat\beta$ hits the truth (bias
+      $\scFaithBiasZeroSeven$ at $T{=}0.7$); the original \emph{diverges}
+      ($\scOrigBiasTwo$ at $T{=}2$).
+    \item \textbf{Prediction:} the causal per-token temperature beats the default
+      $\beta{=}1$ by $\scNllGainZeroSeven$ nats at $T{=}0.7$ (up to $\scNllGainTwo$ at
+      $T{=}2$), within $\scOracleGapTwo$ nats of the oracle.
+  \end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{But does natural text carry a temperature to recover?}
+  \begin{center}\footnotesize
+    \input{../results/tables/self_calibration_survey.tex}
+  \end{center}
+  \vspace{0.2em}
+  \footnotesize
+  \begin{itemize}
+    \item \textbf{Qwen is temperature-robust everywhere:} optimal
+      $T\in[\scSurvOptTRecaman,\scSurvMaxOptT]$; gains $\le\scSurvGainRecaman$ nats on
+      real text ($\scSurvGainShuffledWikitext$ on shuffled gibberish).
+    \item \textbf{Recam\'an (A005132)} is the exception: uniquely \emph{under}confident
+      ($T=\scSurvOptTRecaman$) --- right so often it should be \emph{sharper}.
+      ``Harder $\ne$ mis-temperatured'' (Yoruba is hardest, yet $T\!\approx\!1$).
+    \item $\Rightarrow$ no meaningful miscalibration to exploit in the wild.
+      \emph{(Checked per-passage on the two worst types: a cross-validated per-passage
+      temperature doesn't beat global, and the causal filter captures $\approx0$.)}
+  \end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{Takeaways}
+  \begin{itemize}
+    \item The \emph{corrected} filter recovers a decoder temperature from context and
+      predicts that text materially better than the default model --- using only the
+      model's own logits.
+    \item Correct Bayesian bookkeeping (the $\beta,\beta^{2}$ chain-rule terms) is what
+      makes it work; the original filter is inconsistent.
+    \item Honest scope: an honest \textbf{positive} (Claim 1) \emph{and} an honest
+      \textbf{negative} --- natural text is temperature-robust even far out of
+      distribution.
+  \end{itemize}
+\end{frame}
+
+\end{document}

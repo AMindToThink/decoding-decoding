@@ -588,9 +588,14 @@ anticipate pull the other way. Still, the gain is only $\scSurvGainRecaman$ nats
 With the global-temperature gain $\le\scSurvGainRecaman$ nats on real text, there is
 no meaningful temperature miscalibration for a per-token adaptive scheme to exploit:
 the premise behind an online temperature calibrator on natural text does not hold for
-this model. Modern LLMs appear temperature-robust even far out of distribution. (We
-therefore do not pursue a per-passage heterogeneity test --- its headroom is bounded
-by this already-negligible gain.)
+this model. Modern LLMs appear temperature-robust even far out of distribution. We
+confirmed this directly on the two most mis-temperatured types (shuffled WikiText and
+Recam\'an) with a within-passage cross-validated gate: a per-passage temperature fit
+on the first half of a passage does \emph{not} beat the single global temperature on
+the second half (it overfits --- on Recam\'an the per-passage optimum swings wildly
+across segments but does not transfer), and the causal faithful filter captures no
+significant gain. The per-passage heterogeneity an adaptive calibrator would need is
+absent.
 
 \begin{table}[h]
 \centering
