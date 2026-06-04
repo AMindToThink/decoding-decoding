@@ -2,16 +2,25 @@
 % toolchain (beamer installed via tlmgr). Numbers come from the script-generated
 % macros (\input paper_macros.tex); figures are the generated PNGs. Build:
 %   latexmk -pdf talk.tex
+%
+% Structure = three questions (audience-facing framing; the internal "faithful vs
+% original / β=1-linearization bug" story is deliberately NOT shown — the audience
+% never saw the broken version, so it would only confuse):
+%   Q1 does the model model its decoder?      -> yes        (blacklist, top-k, temperature)
+%   Q2 can we use that to predict better?      -> yes / no   (yes on sampled text, no on real text)
+%   Q3 can we use that to generate better?     -> not yet    (closed-loop self-neutralizes)
 \documentclass[aspectratio=169]{beamer}
 \usetheme{Madrid}
 \usepackage{graphicx}
 \usepackage{booktabs}
-\graphicspath{{../results/counter_decode/self_calibration/}}
+% multiple graphics roots: self-calibration figures + the older decoder-modeling figures
+\graphicspath{{../results/counter_decode/self_calibration/}{../results/figures/}}
 \input{../results/tables/paper_macros.tex}   % script-sourced numbers; never hand-typed
 
-\title[LLMs figure out their decoder]{Modeling and Calibrating:\\ LLMs Figure out their Decoding Process}
-\author{Matthew Khoriaty}
-\institute{Reliable ML with Unreliable Black Boxes}
+% short forms keep the Madrid footer from overflowing (the full institute name was cut off)
+\title[Reading the decoder]{Modeling and Calibrating:\\ LLMs Figure out their Decoding Process}
+\author[M.\ Khoriaty]{Matthew Khoriaty}
+\institute[Reliable ML]{Reliable ML with Unreliable Black Boxes}
 \date{\today}
 
 \begin{document}
@@ -19,102 +28,124 @@
 \frame{\titlepage}
 
 % ---------------------------------------------------------------------------
-\begin{frame}{The question}
+\begin{frame}{The setup: a model has an incentive to know its own decoder}
   \begin{itemize}
-    \item An autoregressive LM is trained to \emph{predict} text --- so when it
-      \emph{generates}, it has an incentive to model its own \textbf{decoder}
-      (temperature, top-$k$, \dots).
-    \item Two questions: \textbf{(a)} does it? \quad \textbf{(b)} can we use that to
-      predict better?
+    \item An autoregressive LM is trained to \emph{predict} text. When it
+      \emph{generates}, a \textbf{decoder} turns its logits into tokens ---
+      temperature, top-$k$, a banned-token list.
+    \item To keep predicting its own output well, it has an incentive to
+      \textbf{model that decoder} from the text it has already produced.
   \end{itemize}
   \vfill
-  \begin{block}{}
-    \centering Can a model read the \emph{temperature} of the text in front of it,
-    and recalibrate itself?
+  \begin{block}{Three questions}
+    \centering
+    \begin{tabular}{ll}
+      \textbf{1.} Does the model model its decoder? & \textbf{yes} \\
+      \textbf{2.} Can we use that to \emph{predict} text better? & \textbf{yes / no} \\
+      \textbf{3.} Can we use that to \emph{generate} better? & \textbf{not yet} \\
+    \end{tabular}
   \end{block}
+  \centering\footnotesize Everything below uses only the model's own logits --- training-free.
 \end{frame}
 
 % ---------------------------------------------------------------------------
-\begin{frame}{The tool: a streaming Bayesian filter on $\log\beta$}
-  \begin{itemize}
-    \item A Laplace filter maintains a posterior on $\eta=\log\beta$
-      (inverse-temperature), updated \emph{per token} from the prefix ---
-      online, causal, training-free. $\hat\beta_t$ depends only on $x_{<t}$.
-    \item Each token is a Newton / Fisher-scoring step on
-      $P(x\mid\eta)=\mathrm{softmax}(e^{\eta}\ell)[x]$.
-    \item \textbf{Fix (this work):} the production filter linearises at $\beta=1$ and is
-      \emph{inconsistent}. The \emph{faithful} filter re-linearises at the running
-      $\hat\beta$, with the correct $\beta,\beta^{2}$ chain-rule terms.
-  \end{itemize}
-\end{frame}
-
-% ---------------------------------------------------------------------------
-\begin{frame}{Two honest negatives (clearing the ground)}
-  \begin{itemize}
-    \item \textbf{Closed-loop correction self-neutralises.} Feeding $\hat\beta$ back into
-      the sampler drives $\beta_{\mathrm{dec}}\to1$ --- the temperature is quietly thrown
-      away. Confirmed across exact-grid filters (not an approximation artifact).
-    \item \textbf{Real creative writing is already calibrated.} The best single
-      temperature gives a non-significant fraction-of-a-nat gain --- nothing to fix.
-  \end{itemize}
-  \vfill
-  \centering\emph{So: to show self-calibration works, test where the temperature is
-  \textbf{known} and there is something to recover.}
-\end{frame}
-
-% ---------------------------------------------------------------------------
-\begin{frame}{Claim 1: recovering a \emph{known} decoder temperature}
-  \footnotesize Generate Qwen-2.5-3B self-text at a known $\beta=1/T$
-  ($\scNseq$ sequences per $T$); run the filter causally over it.
+\begin{frame}{Q1: does the model model its decoder?  \textbf{Yes.}}
+  \footnotesize Constrain the decoder while it generates, then ask whether the model ---
+  reading back its own constrained text --- has \emph{inferred} the constraint.
   \begin{columns}[T]
     \column{0.52\textwidth}
-      \includegraphics[width=\linewidth]{F_selfcal_recovery.png}
+      \includegraphics[width=\linewidth]{fig_blacklist_dropoff.png}
     \column{0.48\textwidth}
-      \includegraphics[width=\linewidth]{F_selfcal_nll_gain.png}
+      \footnotesize
+      \begin{itemize}
+        \item \textbf{Blacklist.} Ban a token. The model lowers its predicted
+          probability on that token over the sequence ($\Delta p_{\text{late--early}}
+          = \blRankOneDeltaP$ for the top token), and below an unbanned control
+          ($\blRankOneTvc$, 95\% CI $[\blRankOneTvcLo,\blRankOneTvcHi]$). The
+          early-position contrast is $\approx 0$ (sanity).
+        \item \textbf{Top-$k$.} Truncate sampling to the top $k$. The model piles
+          extra mass right at the rank-$k$ boundary: treat.$-$ctrl
+          $=\tkDeltaKthree$ ($k{=}3$), $\tkDeltaKfive$ ($k{=}5$), CIs clean of $0$.
+      \end{itemize}
+      \vspace{0.3em}
+      \centering\emph{The model tracks discrete decoder constraints. Next:
+      a \textbf{continuous} one --- temperature.}
   \end{columns}
-  \vspace{0.3em}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{Q2: can we use that to \emph{predict} better?  (1/2: known temperature)}
+  \footnotesize A streaming Bayesian filter reads an inverse-temperature
+  $\hat\beta_t=1/\hat T_t$ off the prefix, \emph{one token at a time}, causally.
+  Test it on Qwen-2.5-3B self-text generated at a \emph{known} temperature
+  ($\scNseq$ sequences per $T$).
+  \begin{columns}[T]
+    \column{0.5\textwidth}
+      \includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{F_selfcal_recovery_talk.png}
+    \column{0.5\textwidth}
+      \includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{F_selfcal_nll_gain.png}
+  \end{columns}
   \footnotesize
   \begin{itemize}
-    \item \textbf{Recovery:} faithful $\hat\beta$ hits the truth (bias
-      $\scFaithBiasZeroSeven$ at $T{=}0.7$); the original \emph{diverges}
-      ($\scOrigBiasTwo$ at $T{=}2$).
-    \item \textbf{Prediction:} the causal per-token temperature beats the default
-      $\beta{=}1$ by $\scNllGainZeroSeven$ nats at $T{=}0.7$ (up to $\scNllGainTwo$ at
-      $T{=}2$), within $\scOracleGapTwo$ nats of the oracle.
+    \item \textbf{Recovery (left):} $\hat\beta_t$ settles on the true $\log(1/T)$
+      from the prefix alone (bias $\scFaithBiasZeroSeven$ at $T{=}0.7$).
+    \item \textbf{Prediction (right):} using $\hat\beta_t$ as a per-token temperature
+      beats the default $\beta{=}1$ model by $\scNllGainZeroSeven$ nats at $T{=}0.7$
+      (up to $\scNllGainTwo$ at $T{=}2$), within $\scOracleGapTwo$ nats of the oracle
+      that \emph{knows} $1/T$. \emph{(Honesty: the big $T\!\ge\!1.5$ gains are on
+      near-random text; coherent wins are $T{=}0.5,0.7$.)}
   \end{itemize}
 \end{frame}
 
 % ---------------------------------------------------------------------------
-\begin{frame}{But does natural text carry a temperature to recover?}
+\begin{frame}{Q2: can we use that to \emph{predict} better?  (2/2: real text)}
+  \footnotesize That was text with a temperature \emph{put} in it. Does \emph{natural}
+  text carry one? Fit the best global temperature per text type; measure held-out NLL
+  gain over $\beta{=}1$, across $\scSurvNDatasets$ types from in-distribution to far-OOD.
   \begin{center}\footnotesize
     \input{../results/tables/self_calibration_survey.tex}
   \end{center}
-  \vspace{0.2em}
+  \vspace{0.1em}
   \footnotesize
   \begin{itemize}
     \item \textbf{Qwen is temperature-robust everywhere:} optimal
-      $T\in[\scSurvOptTRecaman,\scSurvMaxOptT]$; gains $\le\scSurvGainRecaman$ nats on
-      real text ($\scSurvGainShuffledWikitext$ on shuffled gibberish).
-    \item \textbf{Recam\'an (A005132)} is the exception: uniquely \emph{under}confident
-      ($T=\scSurvOptTRecaman$) --- right so often it should be \emph{sharper}.
-      ``Harder $\ne$ mis-temperatured'' (Yoruba is hardest, yet $T\!\approx\!1$).
-    \item $\Rightarrow$ no meaningful miscalibration to exploit in the wild.
-      \emph{(Checked per-passage on the two worst types: a cross-validated per-passage
-      temperature doesn't beat global, and the causal filter captures $\approx0$.)}
+      $T\in[\scSurvOptTRecaman,\scSurvMaxOptT]$; the best temperature buys
+      $\le\scSurvGainRecaman$ nats on any real type ($\scSurvGainShuffledWikitext$
+      on shuffled gibberish). Recam\'an (an integer sequence) is the lone exception
+      --- uniquely \emph{under}confident. ``Harder $\ne$ mis-temperatured'': Yoruba is
+      hardest, yet $T\!\approx\!1$.
+    \item $\Rightarrow$ \textbf{yes} on temperatured text, \textbf{no} in the wild ---
+      there is essentially nothing to recalibrate.
   \end{itemize}
+\end{frame}
+
+% ---------------------------------------------------------------------------
+\begin{frame}{Q3: can we use that to \emph{generate} better?  \textbf{Not yet.}}
+  \begin{itemize}
+    \item The tempting move: feed $\hat\beta_t$ \emph{back} into the sampler to
+      ``correct'' the temperature as it generates.
+    \item \textbf{It self-neutralizes.} Correcting toward $\hat\beta$ drives the
+      effective decoding temperature back to $\beta_{\mathrm{dec}}\to1$ --- the very
+      signal we read off is quietly cancelled. Confirmed across exact-grid filters, so
+      it is not an approximation artifact.
+  \end{itemize}
+  \vfill
+  \centering\emph{So the read-out is real and usable for \textbf{prediction}, but
+  turning it into better \textbf{generation} is still open --- the honest ``in progress.''}
 \end{frame}
 
 % ---------------------------------------------------------------------------
 \begin{frame}{Takeaways}
   \begin{itemize}
-    \item The \emph{corrected} filter recovers a decoder temperature from context and
-      predicts that text materially better than the default model --- using only the
-      model's own logits.
-    \item Correct Bayesian bookkeeping (the $\beta,\beta^{2}$ chain-rule terms) is what
-      makes it work; the original filter is inconsistent.
-    \item Honest scope: an honest \textbf{positive} (Claim 1) \emph{and} an honest
-      \textbf{negative} --- natural text is temperature-robust even far out of
-      distribution.
+    \item \textbf{The model carries a real, training-free signal about its own
+      decoder}, readable from its logits alone --- it tracks a blacklist, a top-$k$
+      cutoff, and a continuous temperature.
+    \item That signal lets us \textbf{predict} known-temperature text materially better,
+      nearly matching an oracle that knows the temperature.
+    \item Two honest limits: modern LLMs are so \textbf{temperature-robust on real text}
+      (even far out of distribution) that there is little to fix in the wild; and using
+      the signal to \textbf{generate} better is unresolved --- closed-loop correction
+      cancels itself.
   \end{itemize}
 \end{frame}
 

@@ -3,10 +3,12 @@
 Reads results/counter_decode/self_calibration/{recovery.json, recovery.npz}
 (written by run_self_calibration.py --part recovery) and emits:
 
-  F_selfcal_recovery.png  — mean β̂_t trajectories, faithful vs original, with the
-                            known target log(1/T) dashed (recovery).
-  F_selfcal_nll_gain.png  — per-T NLL improvement over β=1 (nats), faithful vs the
-                            oracle 1/T (faithful captures nearly all available gain).
+  F_selfcal_recovery.png       — mean β̂_t trajectories, faithful vs original, with the
+                                 known target log(1/T) dashed (recovery; paper/appendix).
+  F_selfcal_recovery_talk.png  — single clean panel (filter β̂_t → log(1/T)); for the
+                                 talk, which does not introduce the faithful/original split.
+  F_selfcal_nll_gain.png       — per-T NLL improvement over β=1 (nats), adaptive β̂_t vs
+                                 the oracle 1/T (the filter captures nearly all the gain).
 
 Usage: uv run python scripts/plot_self_calibration.py
 """
@@ -62,7 +64,28 @@ def main() -> None:
     fig.savefig(out1, dpi=140, bbox_inches="tight")
     plt.close(fig)
 
-    # --- Figure 2: per-T NLL gain over β=1 (faithful vs oracle) ---
+    # --- Figure 1b (talk): single clean panel, no faithful/original framing ---
+    # The talk never introduces the β=1-linearization bug, so it shows only the
+    # working filter recovering the truth. Same data as the left panel above.
+    fig, ax = plt.subplots(figsize=(6.6, 4.4))
+    for T in Ts:
+        target = math.log(1.0 / T)
+        lbf = raw[f"lb_faith_T{T}"].mean(axis=0)
+        x = np.arange(lbf.shape[0])
+        ax.plot(x, lbf, color=colors[T], lw=1.8, label=f"T={T}")
+        ax.axhline(target, color=colors[T], ls=":", lw=1, alpha=0.7)
+    ax.axvline(warmup, color="grey", ls="--", lw=0.8, alpha=0.6)
+    ax.set_xlabel("generated position")
+    ax.set_ylabel(r"estimated $\log\hat\beta_t$   (dotted = true $\log(1/T)$)")
+    ax.set_title("The filter reads the decoder temperature off the text")
+    ax.legend(fontsize=9, ncol=2, loc="best", title="generated at")
+    ax.grid(alpha=0.2)
+    fig.tight_layout()
+    out1b = BASE / "F_selfcal_recovery_talk.png"
+    fig.savefig(out1b, dpi=140, bbox_inches="tight")
+    plt.close(fig)
+
+    # --- Figure 2: per-T NLL gain over β=1 (adaptive β̂_t vs oracle) ---
     faith_gain = [by_T[f"{T}"]["prediction_nll_nats"]["beta1_mean"]
                   - by_T[f"{T}"]["prediction_nll_nats"]["adaptive_faithful_mean"] for T in Ts]
     oracle_gain = [by_T[f"{T}"]["prediction_nll_nats"]["beta1_mean"]
@@ -71,7 +94,7 @@ def main() -> None:
     x = np.arange(len(Ts))
     fig, ax = plt.subplots(figsize=(7.5, 4.2))
     ax.bar(x - 0.2, oracle_gain, width=0.4, label="oracle (known $1/T$)", color="#bbbbbb")
-    ax.bar(x + 0.2, faith_gain, width=0.4, label="faithful adaptive $\\hat\\beta_t$", color="#1f77b4")
+    ax.bar(x + 0.2, faith_gain, width=0.4, label="adaptive $\\hat\\beta_t$ (filter)", color="#1f77b4")
     ax.axhline(0, color="k", lw=0.8)
     for i, (fg, coh) in enumerate(zip(faith_gain, coherent)):
         ax.annotate("coherent" if coh else "near-random", (i, max(fg, 0)),
