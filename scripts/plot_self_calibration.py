@@ -103,7 +103,7 @@ def main() -> None:
     ax.set_xticks(x)
     ax.set_xticklabels([f"T={T}" for T in Ts])
     ax.set_ylabel("NLL improvement over $\\beta{=}1$ (nats)")
-    ax.set_title("Causal per-token temperature beats the default model — nearly matching the oracle")
+    ax.set_title("Causal per-token temperature beats the default model, nearly matching the oracle")
     ax.legend()
     ax.grid(alpha=0.2, axis="y")
     fig.tight_layout()
