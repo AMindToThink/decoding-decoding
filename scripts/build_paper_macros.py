@@ -382,6 +382,7 @@ def ingest(path: Path) -> int:
 
 n_cal = ingest(CD / "calibration_baseline" / "macros.tex")
 n_ntf = ingest(CD / "natural_text" / "macros.tex")
+n_sc = ingest(CD / "self_calibration" / "macros.tex")
 
 # ---------------------------------------------------------------------------
 # write outputs
@@ -400,5 +401,6 @@ for name, body in bodies.items():
     )
 
 print(f"wrote paper_macros.tex with {len(macros)} macros "
-      f"({n_cal} ingested from calibration_baseline, {n_ntf} from natural_text)")
+      f"({n_cal} ingested from calibration_baseline, {n_ntf} from natural_text, "
+      f"{n_sc} from self_calibration)")
 print(f"wrote {len(bodies)} table bodies: {', '.join(sorted(bodies))}")

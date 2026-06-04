@@ -72,6 +72,19 @@ def test_referenced_data_macros_are_defined():
     assert not missing, f"data-macros used but not defined: {missing}"
 
 
+SELFCAL_RE = re.compile(r"^sc[A-Z]")
+
+
+def test_referenced_selfcal_macros_are_defined():
+    """Every self-calibration macro (\\sc<Upper>...) used in the paper is defined."""
+    defined = set(defined_macros())
+    used = set(USE_RE.findall(paper_text()))
+    referenced = {n for n in used if SELFCAL_RE.match(n)}
+    assert referenced, "expected the paper to reference self-calibration (sc*) macros"
+    missing = sorted(referenced - defined)
+    assert not missing, f"self-calibration macros used but not defined: {missing}"
+
+
 def test_all_macro_names_are_letter_only():
     """TeX control-sequence names must be letters only (no digits)."""
     bad = [n for n in defined_macros() if not n.isalpha()]

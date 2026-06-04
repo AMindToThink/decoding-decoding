@@ -6,6 +6,17 @@
 \usepackage{parskip}
 \usepackage[round]{natbib}
 \usepackage[hidelinks]{hyperref}
+\usepackage{xcolor}
+
+% --- DRAFT review markers (strip before the final build) ---------------------
+% Flag a claim you doubt. The span renders red and your reason becomes a
+% footnote -- it wraps to any length and never runs off the page. Always
+% greppable in the source.
+%   \dubious{the claim}                -> red span + a "[dubious]" footnote
+%   \dubious[your reason]{the claim}   -> red span + a footnote with your reason
+% List every open flag:   grep -n 'dubious' decoding_paper.tex
+\newcommand{\dubious}[2][]{\textcolor{red}{#2}\footnote{\textcolor{red}{\textbf{[dubious]}~#1}}}
+% ---------------------------------------------------------------------------
 
 % --- script-generated inputs (numbers and tables; never hand-typed) ---
 % Figures are imported in place via graphicspath; nothing is copied.
@@ -46,15 +57,15 @@ shows the corrector pins the effective temperature in the ``boredom'' regime
 picture and revises the original framing: on real text the filter is
 \emph{not} an online version of Guo temperature scaling (it sits
 $\sim\!1$ nat in $\log\hat\beta$ away from the post-hoc MLE, e.g.\
-$\calLogBetaStreamPooledWT$ vs $\calLogBetaMLEWT$ on WikiText), and Qwen-2.5-3B
-is already well calibrated on naturalistic English. A controlled
+$\calLogBetaStreamPooledWT$ vs $\calLogBetaMLEWT$ on WikiText), and \dubious[The question isn't whether qwen can handle natural english like wikitext, but whether it can handle other text, like the creative writing on which we found it miscalibrated]{Qwen-2.5-3B
+is already well calibrated on naturalistic English}. A controlled
 sampler-switch experiment falsifies the strong hypothesis that the belief is a
-fast posterior read off per-token entropy. The belief that survives is slower
+fast posterior read off per-token entropy. \dubious[Rank statistics and entropy are super closely related. This claim rubs me the wrong way. We know *something* is happening, and our first thoughts at nailing it down didn't work out perfectly, but that doesn't imply that things we can't test properly are the right answer. Do you get what I'm saying?]{The belief that survives is slower
 and more structural --- carried by rank statistics and blacklist signatures,
-not instantaneous entropy. Finally, two metrics for the corrector disagree:
+not instantaneous entropy.} \dubious[Didn't the stability come from crushing the temperature to zero? That's not calibration.]{Finally, two metrics for the corrector disagree:
 closed-loop stability prefers full correction, while invariance on held-out
 natural text shows full correction is catastrophic unless the filter is given a
-fading memory ($\gamma<1$). All numbers and tables in this document are
+fading memory ($\gamma<1$)}. All numbers and tables in this document are
 generated from the experiments' data files by build scripts; the prose cites
 them by name.
 \end{abstract}
@@ -103,6 +114,109 @@ gain (\S\ref{sec:measure}); (iv) that the belief is not a fast entropy read-out
 (\S\ref{sec:form}); and (v) that two natural criteria for tuning the corrector
 disagree, with memory decay as the load-bearing parameter (\S\ref{sec:dynamics}).
 The belief-imprint hypothesis is \emph{refined and constrained}, not refuted.
+
+% =====================================================================
+\section{Background}\label{sec:background}
+% =====================================================================
+For readers new to them, this section glosses the concepts and tools the paper
+uses, grouped by where they first appear. Each term gets a one- or two-sentence
+plain-English definition and a footnote pointing to a focused explainer.
+
+\paragraph{Language models and decoding.}
+An \textbf{autoregressive language model} emits, at each position, a probability
+distribution over the next token given all preceding
+tokens.\footnote{E.~Voita, ``Language Modeling,'' \emph{NLP Course For You}:
+\url{https://lena-voita.github.io/nlp_course/language_modeling.html}.} That
+distribution comes from a \textbf{softmax}, which turns a vector of real-valued
+scores (the \emph{logits} $\ell$) into positive numbers that sum to
+one.\footnote{E.~Bendersky, ``The Softmax function and its derivative'':
+\url{https://eli.thegreenplace.net/2016/the-softmax-function-and-its-derivative/}.}
+\textbf{Decoding} is how we sample from it: \textbf{temperature} rescales the
+logits before the softmax (low temperature sharpens the distribution, high
+temperature flattens it), \textbf{top-$k$} keeps only the $k$ most probable
+tokens, and \textbf{top-$p$} (nucleus) keeps the smallest set of tokens whose
+probability mass exceeds $p$.\footnote{M.~Labonne, ``Decoding Strategies in Large
+Language Models,'' Hugging Face blog:
+\url{https://huggingface.co/blog/mlabonne/decoding-strategies}.} We parameterize
+temperature by its reciprocal, the \textbf{inverse temperature} $\beta=1/T$:
+multiplying the logits by $\beta>1$ concentrates the distribution and $\beta<1$
+spreads it out. \textbf{Mirostat} \citep{basu2021mirostat} and post-hoc
+\textbf{temperature scaling} \citep{guo2017calibration} are prior methods that tune
+a single temperature to control surprise or to calibrate confidence.
+
+\paragraph{The filter's machinery (\S\ref{sec:method}).}
+\textbf{Maximum likelihood estimation (MLE)} picks the parameter value that makes
+the observed data most probable.\footnote{StatQuest (J.~Starmer), ``Maximum
+Likelihood, Clearly Explained'': \url{https://www.youtube.com/watch?v=XepXtl9YKwc}.}
+The \textbf{score} is the gradient of the log-likelihood with respect to the
+parameter (it is zero at the MLE), and the \textbf{Fisher information} is its
+curvature --- how sharply the log-likelihood peaks, equivalently how much one
+observation tells you about the parameter.\footnote{Score and Fisher information,
+UC~Berkeley Stat~210A lecture notes:
+\url{https://stat210a.berkeley.edu/fall-2024/reader/score-fisher.html}; and
+A.~Kristiadi, ``Fisher Information Matrix'':
+\url{https://agustinus.kristia.de/blog/fisher-information/}.}
+\textbf{Newton's method} updates a parameter by $\theta \leftarrow \theta -
+\text{slope}/\text{curvature}$, i.e.\ score over Fisher.\footnote{``Taylor Series
+and Newton's Method,'' suzyahyah.github.io:
+\url{https://suzyahyah.github.io/calculus/optimization/2018/04/06/Taylor-Series-Newtons-Method.html}.}
+The \textbf{Laplace approximation} replaces a complicated posterior distribution
+with a Gaussian centred at its peak (the mode), with width set by the Fisher
+curvature there --- this is what turns the belief update into a cheap, closed-form
+step.\footnote{A.~Kristiadi, Laplace-approximation tutorial:
+\url{https://agustinus.kristia.de/blog/laplace/}.} Performing that update in the
+score-over-Fisher metric is exactly \textbf{natural gradient} (Fisher scoring): a
+gradient step preconditioned by the Fisher information.\footnote{A.~Kristiadi,
+natural-gradient-descent tutorial:
+\url{https://agustinus.kristia.de/blog/natural-gradient/}.} The filter places a
+\textbf{log-normal prior} on $\beta$ (a bell curve on $\log\beta$, so $\beta>0$
+with mean $1$) and performs one such Laplace/Newton step per token --- a streaming
+\textbf{Bayesian posterior update}.
+
+\paragraph{Evaluation and information (\S\ref{sec:measure},~\S\ref{sec:form}).}
+\textbf{Cross-entropy} measures how surprised a model is by held-out text (lower is
+better); \textbf{perplexity} is its exponential, and both are reported here in
+\textbf{nats} (natural-log units; $1$ nat $=1/\!\ln 2 \approx 1.44$
+bits).\footnote{``Understanding Evaluation Metrics for Language Models,'' \emph{The
+Gradient}:
+\url{https://thegradient.pub/understanding-evaluation-metrics-for-language-models/}.}
+The \textbf{negative log-likelihood (NLL) surface} is cross-entropy plotted as a
+function of $\beta$; a key fact in \S\ref{sec:measure} is that it is nearly flat
+near its minimum. \textbf{Entropy} (also in nats) measures how spread-out a
+distribution is --- largest for a uniform distribution and near zero when one token
+dominates.
+
+\paragraph{Linear algebra and statistics (\S\ref{sec:positive},~\S\ref{sec:corrector}).}
+The \textbf{singular value decomposition (SVD)} factorizes a matrix into ranked,
+orthogonal directions; the share of variance lying \emph{outside} the top direction
+(the off-axis residual) measures how far the data depart from a single rank-one
+pattern.\footnote{G.~Gundersen, ``Singular Value Decomposition as Simply as
+Possible'': \url{https://gregorygundersen.com/blog/2018/12/10/svd/}.} A
+\textbf{bootstrap confidence interval} estimates uncertainty by resampling the data
+with replacement many times;\footnote{StatQuest (J.~Starmer), ``Bootstrapping Main
+Ideas'': \url{https://www.youtube.com/watch?v=Xz0x-8-cgaQ}.} the \textbf{cluster
+bootstrap} resamples whole groups (here, prompts) rather than individual
+observations, to respect within-group correlation.\footnote{``The Cluster
+Bootstrap,'' R-bloggers:
+\url{https://www.r-bloggers.com/2013/01/the-cluster-bootstrap/}.} A \textbf{paired
+$t$-test} checks whether the mean of within-pair differences (e.g.\ the same prompt
+under two conditions) is non-zero.\footnote{``The Paired t-Test,'' JMP Statistics
+Knowledge Portal:
+\url{https://www.jmp.com/en/statistics-knowledge-portal/t-test/paired-t-test}.}
+
+\paragraph{Closed-loop dynamics (\S\ref{sec:corrector},~\S\ref{sec:dynamics}).}
+\textbf{Teacher forcing} runs a model over fixed ground-truth text rather than over
+its own samples, isolating its predictions from its
+generation.\footnote{J.~Brownlee, ``What is Teacher Forcing for Recurrent Neural
+Networks?'':
+\url{https://machinelearningmastery.com/teacher-forcing-for-recurrent-neural-networks/}.}
+The filter's \textbf{memory decay} $\gamma$ is an exponential moving average:
+recent tokens count fully while older ones fade, giving an effective window of about
+$1/(1-\gamma)$ tokens.\footnote{``Exponentially Weighted Moving Average,''
+terbe.dev: \url{https://terbe.dev/blog/posts/exponentially-weighted-moving-average}.}
+A \textbf{closed-loop} experiment lets the model condition on its own corrected
+samples (a feedback loop), whereas a teacher-forced \textbf{invariance} test grades
+the corrector on text it did not generate.
 
 % =====================================================================
 \section{Method: a streaming Laplace filter on $\log\beta$}\label{sec:method}
@@ -377,6 +491,69 @@ weakly with genre.}
 \end{figure}
 
 % =====================================================================
+\section{Recovering a known decoder temperature}\label{sec:recovery}
+% =====================================================================
+\S\ref{sec:measure} showed the streaming filter is not Guo's batch MLE on real
+text --- but that comparison collapses the filter to a single scalar and applies
+it as a \emph{global} temperature, discarding its one real selling point: a
+\emph{per-token} estimate read causally off the prefix. We test that directly in
+a controlled setting where the ground truth is known.
+
+\paragraph{A faithful (re-linearised) filter.}
+The production update (\S\ref{sec:method}) evaluates the score and Fisher once at
+$\beta=1$ and never re-evaluates, so $\hat\beta$ is a single damped Newton step
+from the prior mode --- accurate only near $\beta=1$ and biased away from it. For
+the tilted family $P(x\mid\eta)=\mathrm{softmax}(e^{\eta}\ell)[x]$ the exact
+score and expected Fisher in $\eta=\log\beta$ carry chain-rule factors the
+original drops: $\mathrm{score}_\eta=\hat\beta\,(\ell_x-\mathbb{E}_{q_{\hat\beta}}[\ell])$
+and $\mathcal{I}_\eta=\hat\beta^{2}\,\mathrm{Var}_{q_{\hat\beta}}[\ell]$, with
+$q_{\hat\beta}=\mathrm{softmax}(\hat\beta\,\ell)$. The \emph{faithful} filter
+re-linearises at the running $\hat\beta$ each step; over a stream it is a
+consistent estimator of $\beta$, where the original is not.
+
+\paragraph{Setup.}
+For each $T\in\{0.5,0.7,1.0,1.5,2.0\}$ we seed $\scNseq$ sequences with a short
+real prefix ($\scSeedLen$ tokens, WikiText$+$WritingPrompts) and sample $\scGenLen$
+continuation tokens from $\mathrm{softmax}((1/T)\,\ell_t)$, so the decoder
+inverse-temperature is a \emph{known} $\beta=1/T$. We run both filters over the
+generated tokens (warmup $\scWarmup$, $\sigma_0=\scSigmaZero$) and, causally, use
+the pre-update $\hat\beta_t$ as a per-token predictive temperature
+$\tau_t=\hat\beta_t$; NLL is computed exactly. A pooled-MLE sanity check recovers
+$1/T$ at every $T$ (Table~\ref{tab:recovery}).
+
+\paragraph{Result.}
+The faithful filter \emph{recovers the imposed temperature} from the prefix
+alone: its settled $\log\hat\beta$ sits within $0.10$ of the truth across the
+range (bias $\scFaithBiasZeroSeven$ at $T{=}0.7$, $\scFaithBiasTwo$ at $T{=}2.0$),
+while the original is badly biased --- it overshoots for $\beta>1$ (bias
+$\scOrigBiasZeroSeven$ at $T{=}0.7$) and diverges for $\beta<1$ (bias
+$\scOrigBiasTwo$ at $T{=}2.0$). Applied as a causal per-token temperature, the
+faithful estimate \emph{beats the default $\beta{=}1$ model} on held-out NLL by
+$\scNllGainZeroSeven$ nats at $T{=}0.7$ (paired $t=\scNllGainTZeroSeven$) and
+$\scNllGainTwo$ nats at $T{=}2.0$ ($t=\scNllGainTTwo$), landing within
+$\scOracleGapTwo$ nats of the oracle (the known-optimal global $1/T$); at $T{=}1$,
+where nothing needs correcting, it costs only $\scNllGainOne$ nats. \emph{Honest
+caveat:} for $T\ge1.5$ the generated text is near-random (generating-distribution
+entropy $\scGenEntropyOneFive$ and $\scGenEntropyTwo$ nats), so those largest
+gains calibrate incoherent text; the coherent, sharper-than-default regimes
+($T=0.5,0.7$) still show clean, significant wins. This is a demonstration that the
+corrected filter recovers and exploits a decoder temperature from context alone
+--- not a claim that natural text carries such a recoverable temperature
+(\S\ref{sec:limits} returns to that).
+
+\begin{table}[h]
+\centering
+\caption{Controlled recovery: self-text generated at a \emph{known} $\beta=1/T$.
+The faithful filter recovers $\log\beta$ (small bias); the original is badly
+biased. Applied causally per token, the faithful temperature reduces held-out NLL
+vs $\beta{=}1$ ($\Delta$NLL in nats, positive $=$ improvement), within the
+`oracle gap' of the known-optimal global $1/T$. gen.\ $H$ is the mean entropy of
+the generating distribution (nats); $T\ge1.5$ is near-random.}
+\label{tab:recovery}
+\input{\tabdir/self_calibration_recovery.tex}
+\end{table}
+
+% =====================================================================
 \section{The form of the belief: not a fast entropy read-out}\label{sec:form}
 % =====================================================================
 If the model has a belief about $\beta^{\mathrm{dec}}$, does it show up as
@@ -515,7 +692,7 @@ $(\gamma=0.95,\,\alpha=1.0,\,p=0.5)$; for natural generation
 calibrated.
 
 % =====================================================================
-\section{Limitations and conclusion}
+\section{Limitations and conclusion}\label{sec:limits}
 % =====================================================================
 \paragraph{Limitations.} All results use one model (Qwen-2.5-3B), one
 tokenization, and a small set of corpora; the ``Qwen is well-calibrated''

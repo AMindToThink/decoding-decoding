@@ -1,0 +1,240 @@
+{
+  "config": {
+    "temps": [
+      0.5,
+      0.7,
+      1.0,
+      1.5,
+      2.0
+    ],
+    "n_seq": 64,
+    "seed_len": 24,
+    "length": 256,
+    "gen_len": 232,
+    "warmup": 20,
+    "sigma_0": 0.5,
+    "seed": 12345
+  },
+  "by_temp": {
+    "0.5": {
+      "T": 0.5,
+      "beta_true": 2.0,
+      "log_beta_true": 0.6931471805599453,
+      "recovery": {
+        "faithful_settled_logbeta_mean": 0.591291606426239,
+        "faithful_settled_logbeta_se": 0.008020861074328423,
+        "faithful_settled_bias_vs_true": -0.1018555760383606,
+        "original_settled_logbeta_mean": 1.105344533920288,
+        "original_settled_bias_vs_true": 0.4121973514556885,
+        "faithful_median_logbeta_mean": 0.5682786703109741,
+        "original_median_logbeta_mean": 1.0249650478363037,
+        "final_eta_faithful_mean": 0.5933001041412354,
+        "final_eta_original_mean": 1.123255968093872
+      },
+      "prediction_nll_nats": {
+        "beta1_mean": 0.6371981153267741,
+        "oracle_1overT_mean": 0.4460823550866615,
+        "adaptive_faithful_mean": 0.4555662730855653,
+        "adaptive_original_mean": 0.47617593138727754,
+        "faithful_minus_beta1": {
+          "mean": -0.18163184224120876,
+          "t": -20.610684585214145,
+          "p": 1.0695260762698422e-29
+        },
+        "original_minus_beta1": {
+          "mean": -0.16102218393949666,
+          "t": -19.859866497444393,
+          "p": 8.149569754928882e-29
+        },
+        "faithful_minus_oracle": {
+          "mean": 0.00948391799890382,
+          "t": 9.931365123482193,
+          "p": 1.6377403546404073e-14
+        }
+      },
+      "sanity_pooled_mle_beta": 2.004839699817086,
+      "sanity_mle_vs_truth_logratio": 0.0024169267864811994,
+      "diagnostics": {
+        "gen_dist_entropy_nats": 0.4475122094154358,
+        "repeat_rate": 0.013625592417061612,
+        "distinct_token_ratio": 0.3342423349056604
+      }
+    },
+    "0.7": {
+      "T": 0.7,
+      "beta_true": 1.4285714285714286,
+      "log_beta_true": 0.3566749439387324,
+      "recovery": {
+        "faithful_settled_logbeta_mean": 0.3263615667819977,
+        "faithful_settled_logbeta_se": 0.005947411991655827,
+        "faithful_settled_bias_vs_true": -0.03031337261199951,
+        "original_settled_logbeta_mean": 0.8347955942153931,
+        "original_settled_bias_vs_true": 0.4781206548213959,
+        "faithful_median_logbeta_mean": 0.3152502179145813,
+        "original_median_logbeta_mean": 0.7535333633422852,
+        "final_eta_faithful_mean": 0.32839328050613403,
+        "final_eta_original_mean": 0.8560826778411865
+      },
+      "prediction_nll_nats": {
+        "beta1_mean": 1.1602594997711406,
+        "oracle_1overT_mean": 1.046282204149645,
+        "adaptive_faithful_mean": 1.052754845914158,
+        "adaptive_original_mean": 1.1964119229444883,
+        "faithful_minus_beta1": {
+          "mean": -0.10750465385698285,
+          "t": -23.52134615500272,
+          "p": 6.683557393546246e-33
+        },
+        "original_minus_beta1": {
+          "mean": 0.03615242317334772,
+          "t": 2.378753759989217,
+          "p": 0.02041457242928106
+        },
+        "faithful_minus_oracle": {
+          "mean": 0.0064726417645129,
+          "t": 6.081432288932863,
+          "p": 7.712751615322535e-08
+        }
+      },
+      "sanity_pooled_mle_beta": 1.4215462387822535,
+      "sanity_mle_vs_truth_logratio": -0.004929764196864916,
+      "diagnostics": {
+        "gen_dist_entropy_nats": 1.0408774614334106,
+        "repeat_rate": 0.004591232227488151,
+        "distinct_token_ratio": 0.4569575471698113
+      }
+    },
+    "1.0": {
+      "T": 1.0,
+      "beta_true": 1.0,
+      "log_beta_true": 0.0,
+      "recovery": {
+        "faithful_settled_logbeta_mean": -0.005347500089555979,
+        "faithful_settled_logbeta_se": 0.0036109676584601402,
+        "faithful_settled_bias_vs_true": -0.005347500089555979,
+        "original_settled_logbeta_mean": -0.11917997151613235,
+        "original_settled_bias_vs_true": -0.11917997151613235,
+        "faithful_median_logbeta_mean": -0.009439783170819283,
+        "original_median_logbeta_mean": -0.12095668166875839,
+        "final_eta_faithful_mean": -0.004300796426832676,
+        "final_eta_original_mean": -0.11868185549974442
+      },
+      "prediction_nll_nats": {
+        "beta1_mean": 2.800509572882767,
+        "oracle_1overT_mean": 2.800509572882767,
+        "adaptive_faithful_mean": 2.8068508116061404,
+        "adaptive_original_mean": 3.088868066395163,
+        "faithful_minus_beta1": {
+          "mean": 0.006341238723373197,
+          "t": 10.439740213834266,
+          "p": 2.2742865980883257e-15
+        },
+        "original_minus_beta1": {
+          "mean": 0.28835849351239584,
+          "t": 5.888345278752826,
+          "p": 1.6421465093348393e-07
+        },
+        "faithful_minus_oracle": {
+          "mean": 0.006341238723373197,
+          "t": 10.439740213834266,
+          "p": 2.2742865980883257e-15
+        }
+      },
+      "sanity_pooled_mle_beta": 0.9988072179646557,
+      "sanity_mle_vs_truth_logratio": -0.0011934939660113093,
+      "diagnostics": {
+        "gen_dist_entropy_nats": 2.7971484661102295,
+        "repeat_rate": 0.006294431279620853,
+        "distinct_token_ratio": 0.633033608490566
+      }
+    },
+    "1.5": {
+      "T": 1.5,
+      "beta_true": 0.6666666666666666,
+      "log_beta_true": -0.40546510810816444,
+      "recovery": {
+        "faithful_settled_logbeta_mean": -0.4083598256111145,
+        "faithful_settled_logbeta_se": 0.004474986810237169,
+        "faithful_settled_bias_vs_true": -0.0028947293758392334,
+        "original_settled_logbeta_mean": -3.017211437225342,
+        "original_settled_bias_vs_true": -2.611746311187744,
+        "faithful_median_logbeta_mean": -0.41371992230415344,
+        "original_median_logbeta_mean": -2.880589723587036,
+        "final_eta_faithful_mean": -0.4084005355834961,
+        "final_eta_original_mean": -3.057854413986206
+      },
+      "prediction_nll_nats": {
+        "beta1_mean": 10.97538887454286,
+        "oracle_1overT_mean": 10.552095093437726,
+        "adaptive_faithful_mean": 10.55671419454656,
+        "adaptive_original_mean": 11.65831273105347,
+        "faithful_minus_beta1": {
+          "mean": -0.4186746799963016,
+          "t": -53.67005867364727,
+          "p": 2.6015003463476793e-54
+        },
+        "original_minus_beta1": {
+          "mean": 0.6829238565106097,
+          "t": 18.878230732522447,
+          "p": 1.2634440549771881e-27
+        },
+        "faithful_minus_oracle": {
+          "mean": 0.004619101108830764,
+          "t": 8.130382028785013,
+          "p": 2.110902182611618e-11
+        }
+      },
+      "sanity_pooled_mle_beta": 0.6673576395636321,
+      "sanity_mle_vs_truth_logratio": 0.001035922592310723,
+      "diagnostics": {
+        "gen_dist_entropy_nats": 10.552205085754395,
+        "repeat_rate": 0.0005183649289099526,
+        "distinct_token_ratio": 0.9913030660377359
+      }
+    },
+    "2.0": {
+      "T": 2.0,
+      "beta_true": 0.5,
+      "log_beta_true": -0.6931471805599453,
+      "recovery": {
+        "faithful_settled_logbeta_mean": -0.7840585708618164,
+        "faithful_settled_logbeta_se": 0.07068711519241333,
+        "faithful_settled_bias_vs_true": -0.0909113883972168,
+        "original_settled_logbeta_mean": -4.843022346496582,
+        "original_settled_bias_vs_true": -4.149875164031982,
+        "faithful_median_logbeta_mean": -0.8236119747161865,
+        "original_median_logbeta_mean": -4.658636093139648,
+        "final_eta_faithful_mean": -0.7715759873390198,
+        "final_eta_original_mean": -4.896146774291992
+      },
+      "prediction_nll_nats": {
+        "beta1_mean": 12.163686022751104,
+        "oracle_1overT_mean": 11.41631954428652,
+        "adaptive_faithful_mean": 11.44101321489884,
+        "adaptive_original_mean": 11.892041211420636,
+        "faithful_minus_beta1": {
+          "mean": -0.7226728078522632,
+          "t": -55.97846716476031,
+          "p": 1.9334307696262092e-55
+        },
+        "original_minus_beta1": {
+          "mean": -0.27164481133046864,
+          "t": -15.99886253233023,
+          "p": 7.212402770484564e-24
+        },
+        "faithful_minus_oracle": {
+          "mean": 0.024693670612320417,
+          "t": 2.447209489852598,
+          "p": 0.017197097284693378
+        }
+      },
+      "sanity_pooled_mle_beta": 0.49884627212725696,
+      "sanity_mle_vs_truth_logratio": -0.0023101220238306297,
+      "diagnostics": {
+        "gen_dist_entropy_nats": 11.405478477478027,
+        "repeat_rate": 0.0,
+        "distinct_token_ratio": 0.9977152122641509
+      }
+    }
+  }
+}

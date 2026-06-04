@@ -182,6 +182,88 @@ def laplace_update(
     return LaplaceState(eta_hat=eta_new, J=J_new), score, fisher
 
 
+def laplace_update_faithful(
+    state: LaplaceState,
+    logits: torch.Tensor,
+    sampled_token_ids: torch.Tensor,
+    *,
+    evidence_weight: float = 1.0,
+    memory_decay: float = 1.0,
+    prior_eta: float = 0.0,
+    prior_J: float = 0.0,
+) -> Tuple[LaplaceState, torch.Tensor, torch.Tensor]:
+    """Streaming Laplace update that RE-LINEARIZES at the running estimate β̂.
+
+    ``laplace_update`` evaluates the score and Fisher once at β=1 and never
+    re-evaluates, so its β̂ is a single damped Newton step from the prior mode —
+    accurate only near β=1 and biased away from 1 otherwise. This variant
+    evaluates them at the current estimate β̂ = exp(η̂), making each token a
+    proper Fisher-scoring (natural-gradient) step in η = log β. Over a stream it
+    is a *consistent* estimator of β (converges to the MLE), where the original
+    lags.
+
+    For the 1-parameter exponential family ``P(x | η) = softmax(e^η · ℓ)[x]`` the
+    EXACT score and expected Fisher in η are (note dβ/dη = β)::
+
+        β̂      = exp(η̂)
+        q_β     = softmax(β̂ · ℓ)                  # re-linearize at β̂, NOT at 1
+        E_qβ    = Σ_j q_β[j] · ℓ_j
+        Var_qβ  = Σ_j q_β[j] · (ℓ_j − E_qβ)²
+        score_η  = β̂  · (ℓ_{x} − E_qβ)             # = d/dη log P(x|η)
+        fisher_η = β̂² · Var_qβ                     # = E[−d²/dη² log P(x|η)]
+
+    The β̂ / β̂² chain-rule factors are what make this consistent in η-space;
+    ``laplace_update`` drops them (exact only at β̂=1). Because q_β depends on β̂,
+    the bootstrap reference ℓ* = ℓ/β̂ no longer cancels out of score/fisher — the
+    "cancellation" noted for ``laplace_update`` is *by design* broken here (that
+    cancellation IS the β=1 linearization).
+
+    Recursion is identical in structure to ``laplace_update``; the linearization
+    point is the *decayed* η̂ (the belief we step from). One re-linearized Newton
+    step per token.
+
+    Args / Returns mirror ``laplace_update`` exactly. The returned ``(score,
+    fisher)`` are the η-space quantities ``score_η, fisher_η`` (carrying β̂, β̂²).
+    """
+    if logits.dim() != 2:
+        raise ValueError(f"logits must be (B, V), got shape {tuple(logits.shape)}")
+    if sampled_token_ids.dim() != 1 or sampled_token_ids.shape[0] != logits.shape[0]:
+        raise ValueError(
+            f"sampled_token_ids must be (B,) matching logits batch; "
+            f"got {tuple(sampled_token_ids.shape)} vs B={logits.shape[0]}"
+        )
+
+    # Decay toward prior FIRST (γ=1 ⇒ no decay); we linearize at the decayed belief.
+    if memory_decay < 1.0:
+        eta_decayed = memory_decay * state.eta_hat + (1.0 - memory_decay) * prior_eta
+        J_decayed = memory_decay * state.J + (1.0 - memory_decay) * prior_J
+    else:
+        eta_decayed = state.eta_hat
+        J_decayed = state.J
+
+    # Re-linearize the tilted distribution at the current estimate β̂ = exp(η̂).
+    beta_hat = torch.exp(eta_decayed)                      # (B,)
+    log_q = torch.log_softmax(beta_hat.unsqueeze(-1) * logits, dim=-1)  # (B, V)
+    q = torch.exp(log_q)                                   # (B, V)
+
+    E_q = (q * logits).sum(dim=-1)                         # (B,) — E_{q_β}[ℓ]
+    centered = logits - E_q.unsqueeze(-1)                  # (B, V)
+    Var_q = (q * centered * centered).sum(dim=-1)          # (B,) — Var_{q_β}[ℓ]
+
+    ell_x = logits.gather(-1, sampled_token_ids.unsqueeze(-1)).squeeze(-1)  # (B,)
+
+    # η-space score and expected Fisher carry the chain-rule factors β̂, β̂².
+    score = beta_hat * (ell_x - E_q)                       # (B,) — score_η
+    fisher = beta_hat * beta_hat * Var_q                   # (B,) — fisher_η
+
+    score_eff = evidence_weight * score
+    fisher_eff = evidence_weight * fisher
+    J_new = J_decayed + fisher_eff
+    eta_new = eta_decayed + score_eff / J_new
+
+    return LaplaceState(eta_hat=eta_new, J=J_new), score, fisher
+
+
 # ---------------------------------------------------------------------------
 # Discrete-grid Bayesian filter (cross-check)
 # ---------------------------------------------------------------------------
