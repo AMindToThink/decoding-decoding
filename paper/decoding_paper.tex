@@ -539,7 +539,7 @@ gains calibrate incoherent text; the coherent, sharper-than-default regimes
 ($T=0.5,0.7$) still show clean, significant wins. This is a demonstration that the
 corrected filter recovers and exploits a decoder temperature from context alone
 --- not a claim that natural text carries such a recoverable temperature
-(\S\ref{sec:limits} returns to that).
+(\S\ref{sec:survey} tests exactly that).
 
 \begin{table}[h]
 \centering
@@ -551,6 +551,57 @@ vs $\beta{=}1$ ($\Delta$NLL in nats, positive $=$ improvement), within the
 the generating distribution (nats); $T\ge1.5$ is near-random.}
 \label{tab:recovery}
 \input{\tabdir/self_calibration_recovery.tex}
+\end{table}
+
+% =====================================================================
+\section{Is natural text mis-temperatured? A calibration survey}\label{sec:survey}
+% =====================================================================
+Claim of \S\ref{sec:recovery}: the filter \emph{can} exploit a decoder temperature
+when one is present. Does natural text present one? We fit the optimal global
+temperature (Guo MLE on a train split) per text type and measure its held-out NLL
+gain over $\beta=1$, across $\scSurvNDatasets$ types spanning in-distribution to
+far-OOD ($\scSurvNtrain$ train / $\scSurvNtest$ test passages each, length
+$\scSurvLength$; Table~\ref{tab:survey}).
+
+\paragraph{The model is remarkably temperature-calibrated everywhere.}
+Optimal $T$ lies in $[\,\scSurvOptTRecaman,\,\scSurvMaxOptT\,]$ across all types, and the best
+global temperature buys at most $\scSurvGainRecaman$ nats on any \emph{real} type
+(only $\scSurvGainShuffledWikitext$ nats even on token-shuffled gibberish, the
+extreme control). The OOD/atypical types are \emph{statistically} mis-temperatured
+in a sensible direction --- mildly overconfident on symbolic and non-Latin text
+(ABC music $T=\scSurvOptTAbcMusic$, $\Delta$NLL $\scSurvGainAbcMusic$,
+$t=\scSurvGainTAbcMusic$; Telugu $T=\scSurvOptTTelugu$) --- but the magnitudes are
+practically negligible. Difficulty does not imply mis-temperature: Yoruba is the
+hardest natural text ($\beta{=}1$ NLL $\scSurvNllBetaOneYoruba$) yet
+$T=\scSurvOptTYoruba$.
+
+\paragraph{Recam\'an (A005132) is the instructive exception.}
+On this deterministic-but-erratic integer sequence the model is extremely confident
+and usually right ($\beta{=}1$ NLL $\scSurvNllBetaOneRecaman$, entropy
+$\scSurvEntropyRecaman$ nats), yet it is the only type that is \emph{under}confident:
+optimal $T=\scSurvOptTRecaman<1$, so \emph{sharpening} helps
+($t=\scSurvGainTRecaman$). The predictable structure (delimiters, digit runs)
+warrants \emph{more} confidence than the model gives, while the rare jumps it cannot
+anticipate pull the other way. Still, the gain is only $\scSurvGainRecaman$ nats.
+
+\paragraph{Consequence.}
+With the global-temperature gain $\le\scSurvGainRecaman$ nats on real text, there is
+no meaningful temperature miscalibration for a per-token adaptive scheme to exploit:
+the premise behind an online temperature calibrator on natural text does not hold for
+this model. Modern LLMs appear temperature-robust even far out of distribution. (We
+therefore do not pursue a per-passage heterogeneity test --- its headroom is bounded
+by this already-negligible gain.)
+
+\begin{table}[h]
+\centering
+\caption{Calibration survey: held-out NLL gain (nats) of the best global temperature
+over $\beta{=}1$, per text type (Guo MLE fit on train, scored on $\scSurvNtest$ test
+passages; $^{*}p<0.05$, $^{**}p<10^{-3}$), ranked by gain. The model is well
+temperature-calibrated everywhere (optimal $T\in[\scSurvOptTRecaman,\scSurvMaxOptT]$; real-text
+gains $\le\scSurvGainRecaman$ nats); shuffled WikiText is an extreme control.
+$H_{\beta=1}$ is mean predictive entropy (difficulty).}
+\label{tab:survey}
+\input{\tabdir/self_calibration_survey.tex}
 \end{table}
 
 % =====================================================================

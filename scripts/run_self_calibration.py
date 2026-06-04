@@ -347,9 +347,190 @@ def run_recovery(args, model, tokenizer) -> dict:
     return summary, raw
 
 
+# ---------------------------------------------------------------------------
+# Part 0 — calibration survey across text types
+# ---------------------------------------------------------------------------
+
+# Low-resource / constructed languages via wikimedia/wikipedia (config = dump.lang).
+_WIKI_LANG = {"yoruba": "20231101.yo", "esperanto": "20231101.eo", "telugu": "20231101.te"}
+
+
+def _stream_text_passages(
+    *, hf_name, hf_config, field, n, min_tokens, tokenizer, char_per_tok=2, max_scan=400_000
+) -> list[str]:
+    """Stream `hf_name`, keep passages with >= min_tokens tokens until we have n.
+
+    A char prefilter (len < min_tokens*char_per_tok) skips obvious stubs cheaply
+    before tokenising. Fails LOUD if it cannot reach n (no silent skip)."""
+    from datasets import load_dataset
+
+    ds = load_dataset(hf_name, hf_config, streaming=True) if hf_config else load_dataset(hf_name, streaming=True)
+    split = next(iter(ds.keys()))
+    out: list[str] = []
+    scanned = 0
+    for ex in ds[split]:
+        scanned += 1
+        if scanned > max_scan:
+            break
+        t = ex.get(field)
+        if not isinstance(t, str) or len(t) < min_tokens * char_per_tok:
+            continue
+        if len(tokenizer(t, add_special_tokens=False)["input_ids"]) >= min_tokens:
+            out.append(t)
+            if len(out) >= n:
+                return out
+    raise RuntimeError(
+        f"{hf_name}[{hf_config}] field={field!r}: only {len(out)}/{n} passages "
+        f">= {min_tokens} tokens after scanning {scanned} rows"
+    )
+
+
+def _recaman_sequence(n_terms: int) -> list[int]:
+    """OEIS A005132 (Recamán): a(0)=0; a(n)=a(n-1)-n if positive & unseen, else a(n-1)+n.
+
+    Deterministic but erratic (0,1,3,6,2,7,13,20,12,21,11,...) — a 'confidently wrong'
+    test: a hidden rule the model can't infer locally, so it may be mis-temperatured."""
+    seq, seen = [0], {0}
+    for i in range(1, n_terms):
+        prev = seq[-1]
+        cand = prev - i
+        nxt = cand if (cand > 0 and cand not in seen) else prev + i
+        seq.append(nxt)
+        seen.add(nxt)
+    return seq
+
+
+def load_survey_ids(*, key, n, length, tokenizer, seed) -> torch.Tensor:
+    """Return (n, length) int64 token ids for survey dataset `key`."""
+    from decoding_decoding.natural_text_filter import (
+        _tokenize_to_length,
+        load_wikitext_passages,
+        load_writingprompts_passages,
+    )
+
+    if key == "recaman":
+        # One long deterministic sequence, rendered as decimals, chunked into n×length.
+        seq = _recaman_sequence(40_000)
+        text = ", ".join(str(x) for x in seq)
+        flat = tokenizer(text, add_special_tokens=False, return_tensors="pt")["input_ids"][0]
+        need = n * length
+        if flat.shape[0] < need:
+            raise RuntimeError(f"recaman: {flat.shape[0]} tokens < needed {need}; raise n_terms")
+        return flat[:need].reshape(n, length).contiguous()
+
+    if key in ("wikitext", "shuffled_wikitext"):
+        texts = load_wikitext_passages(n=n, min_tokens=length, tokenizer=tokenizer, seed=seed)
+    elif key == "writingprompts":
+        texts = load_writingprompts_passages(n=n, min_tokens=length, tokenizer=tokenizer, seed=seed)
+    elif key in _WIKI_LANG:
+        texts = _stream_text_passages(
+            hf_name="wikimedia/wikipedia", hf_config=_WIKI_LANG[key], field="text",
+            n=n, min_tokens=length, tokenizer=tokenizer,
+        )
+    elif key == "gutenberg":
+        texts = _stream_text_passages(
+            hf_name="sedthh/gutenberg_english", hf_config=None, field="TEXT",
+            n=n, min_tokens=length, tokenizer=tokenizer,
+        )
+    elif key == "abc_music":
+        texts = _stream_text_passages(
+            hf_name="sander-wood/irishman", hf_config=None, field="abc notation",
+            n=n, min_tokens=length, tokenizer=tokenizer, char_per_tok=1,
+        )
+    else:
+        raise ValueError(f"unknown survey dataset key {key!r}")
+
+    ids = _tokenize_to_length(texts, tokenizer, length=length)       # (n, length)
+    if key == "shuffled_wikitext":
+        # Permute tokens within each passage → destroys local structure (extreme
+        # control: the model is maximally over-confident on broken n-grams).
+        g = torch.Generator().manual_seed(seed + 777)
+        for i in range(ids.shape[0]):
+            ids[i] = ids[i][torch.randperm(ids.shape[1], generator=g)]
+    return ids
+
+
+def forward_window(*, model, ids, warmup, device, batch=16):
+    """Forward `ids` (n, L); return (logits_win (n,U,V) fp16, targets (n,U)) for the
+    filter window: logits at positions [warmup-1 : L-1] predict tokens [warmup : L]."""
+    n, L = ids.shape
+    U = L - warmup
+    V = model.config.vocab_size
+    logits_win = torch.empty((n, U, V), dtype=torch.float16, device=device)
+    targets = torch.empty((n, U), dtype=torch.long, device=device)
+    with torch.no_grad():
+        for s in range(0, n, batch):
+            b = ids[s : s + batch].to(device)
+            out = model(input_ids=b, attention_mask=torch.ones_like(b), use_cache=False)
+            logits_win[s : s + b.shape[0]] = out.logits[:, warmup - 1 : L - 1, :].to(torch.float16)
+            targets[s : s + b.shape[0]] = b[:, warmup:L]
+            del out
+            torch.cuda.empty_cache()
+    return logits_win, targets
+
+
+def run_survey(args, model, tokenizer) -> dict:
+    device = args.device
+    L, w = args.length, args.warmup
+    ntr, nte = args.n_train, args.n_test
+    summary = {
+        "config": {
+            "datasets": list(args.datasets), "n_train": ntr, "n_test": nte,
+            "length": L, "warmup": w, "seed": args.seed,
+        },
+        "by_dataset": {},
+    }
+    for key in args.datasets:
+        t0 = time.time()
+        ids = load_survey_ids(key=key, n=ntr + nte, length=L, tokenizer=tokenizer, seed=args.seed)
+        logits_win, targets = forward_window(
+            model=model, ids=ids, warmup=w, device=device, batch=args.batch
+        )
+        # Global Guo-MLE temperature fit on TRAIN; evaluate on TEST.
+        beta_mle = pooled_mle_beta(logits_arr=logits_win[:ntr], tokens=targets[:ntr])
+        nll_b1 = per_token_nll(logits_arr=logits_win[ntr:], tokens=targets[ntr:], tau=1.0)
+        nll_mle = per_token_nll(logits_arr=logits_win[ntr:], tokens=targets[ntr:], tau=beta_mle)
+        seq_b1, seq_mle = nll_b1.mean(axis=1), nll_mle.mean(axis=1)
+        gain = float((seq_b1 - seq_mle).mean())            # +nats = temperature helps
+        tt = stats.ttest_rel(seq_b1, seq_mle)
+        # Mean entropy of the model's β=1 predictive distribution (difficulty proxy).
+        with torch.no_grad():
+            lw = logits_win[ntr:].float().reshape(-1, logits_win.shape[-1])
+            ent = 0.0
+            cn = 4096
+            for i in range(0, lw.shape[0], cn):
+                lq = F.log_softmax(lw[i : i + cn], dim=-1)
+                ent += float((-(lq.exp() * lq).sum(-1)).sum())
+            ent /= lw.shape[0]
+        summary["by_dataset"][key] = {
+            "n_train": ntr, "n_test": nte,
+            "beta_mle": beta_mle,
+            "optimal_T": 1.0 / beta_mle,
+            "nll_beta1_mean": float(seq_b1.mean()),
+            "nll_optT_mean": float(seq_mle.mean()),
+            "global_T_gain_nats": gain,
+            "gain_t": float(tt.statistic),
+            "gain_p": float(tt.pvalue),
+            "mean_beta1_entropy_nats": ent,
+        }
+        print(
+            f"[survey] {key:18s} optT={1.0/beta_mle:5.2f} (β={beta_mle:.3f}) | "
+            f"NLL β1={seq_b1.mean():7.3f} optT={seq_mle.mean():7.3f} | "
+            f"gain={gain:+.4f} nats (t={tt.statistic:+.1f}, p={tt.pvalue:.1e}) | "
+            f"H_β1={ent:.2f} | {time.time()-t0:.1f}s"
+        )
+        del logits_win, targets
+        torch.cuda.empty_cache()
+
+    # Rank by miscalibration (global-T gain).
+    ranked = sorted(summary["by_dataset"].items(), key=lambda kv: -kv[1]["global_T_gain_nats"])
+    summary["ranked_by_gain"] = [k for k, _ in ranked]
+    return summary
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--part", choices=["recovery"], default="recovery")
+    p.add_argument("--part", choices=["recovery", "survey"], default="recovery")
     p.add_argument("--temps", type=float, nargs="+", default=[0.5, 0.7, 1.0, 1.5, 2.0])
     p.add_argument("--n-seq", type=int, default=64)
     p.add_argument("--seed-len", type=int, default=24)
@@ -357,6 +538,14 @@ def main() -> None:
     p.add_argument("--warmup", type=int, default=20)
     p.add_argument("--sigma0", type=float, default=0.5)
     p.add_argument("--seed", type=int, default=12345)
+    # survey-only
+    p.add_argument("--datasets", type=str, nargs="+", default=[
+        "wikitext", "writingprompts", "gutenberg", "esperanto",
+        "yoruba", "telugu", "abc_music", "recaman", "shuffled_wikitext",
+    ])
+    p.add_argument("--n-train", type=int, default=80)
+    p.add_argument("--n-test", type=int, default=80)
+    p.add_argument("--batch", type=int, default=16)
     p.add_argument("--cuda-device", type=str, default="0")
     p.add_argument("--device", type=str, default="cuda")
     args = p.parse_args()
@@ -375,6 +564,11 @@ def main() -> None:
         (RESULTS_OUT / "recovery.json").write_text(json.dumps(summary, indent=2))
         np.savez(DATA_OUT / "recovery.npz", **raw, allow_pickle=True)
         print(f"[self-cal] wrote {RESULTS_OUT / 'recovery.json'}")
+    elif args.part == "survey":
+        summary = run_survey(args, model, tok)
+        (RESULTS_OUT / "survey.json").write_text(json.dumps(summary, indent=2))
+        print(f"[self-cal] wrote {RESULTS_OUT / 'survey.json'}")
+        print(f"[self-cal] ranked by global-T gain: {summary['ranked_by_gain']}")
 
 
 if __name__ == "__main__":

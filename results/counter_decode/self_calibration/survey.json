@@ -1,0 +1,141 @@
+{
+  "config": {
+    "datasets": [
+      "wikitext",
+      "writingprompts",
+      "gutenberg",
+      "esperanto",
+      "yoruba",
+      "telugu",
+      "abc_music",
+      "recaman",
+      "shuffled_wikitext"
+    ],
+    "n_train": 60,
+    "n_test": 60,
+    "length": 256,
+    "warmup": 20,
+    "seed": 12345
+  },
+  "by_dataset": {
+    "wikitext": {
+      "n_train": 60,
+      "n_test": 60,
+      "beta_mle": 1.00043982511359,
+      "optimal_T": 0.9995603682474955,
+      "nll_beta1_mean": 1.957263984606652,
+      "nll_optT_mean": 1.957277445460836,
+      "global_T_gain_nats": -1.3460854183533489e-05,
+      "gain_t": -1.8589556822046804,
+      "gain_p": 0.06802292997020602,
+      "mean_beta1_entropy_nats": 1.9274624064817267
+    },
+    "writingprompts": {
+      "n_train": 60,
+      "n_test": 60,
+      "beta_mle": 0.9642948176486135,
+      "optimal_T": 1.0370272469559174,
+      "nll_beta1_mean": 2.868910600267317,
+      "nll_optT_mean": 2.8678286166049487,
+      "global_T_gain_nats": 0.0010819836623678913,
+      "gain_t": 0.9515783411855554,
+      "gain_p": 0.3451929809254614,
+      "mean_beta1_entropy_nats": 2.744160625220692
+    },
+    "gutenberg": {
+      "n_train": 60,
+      "n_test": 60,
+      "beta_mle": 0.9908362417802054,
+      "optimal_T": 1.0092485093231254,
+      "nll_beta1_mean": 1.8653617363252837,
+      "nll_optT_mean": 1.8654132488986455,
+      "global_T_gain_nats": -5.151257336197026e-05,
+      "gain_t": -0.29014331675626476,
+      "gain_p": 0.7727239301158312,
+      "mean_beta1_entropy_nats": 1.8546498271705067
+    },
+    "esperanto": {
+      "n_train": 60,
+      "n_test": 60,
+      "beta_mle": 0.9736191189893993,
+      "optimal_T": 1.0270956891622913,
+      "nll_beta1_mean": 2.72112533999814,
+      "nll_optT_mean": 2.7204627162818977,
+      "global_T_gain_nats": 0.0006626237162426015,
+      "gain_t": 1.227209903278011,
+      "gain_p": 0.22461805584356737,
+      "mean_beta1_entropy_nats": 2.62609311551024
+    },
+    "yoruba": {
+      "n_train": 60,
+      "n_test": 60,
+      "beta_mle": 1.0021335254393215,
+      "optimal_T": 0.9978710168004945,
+      "nll_beta1_mean": 3.061920310232307,
+      "nll_optT_mean": 3.0618211633229366,
+      "global_T_gain_nats": 9.91469093703327e-05,
+      "gain_t": 1.9787735542573395,
+      "gain_p": 0.05251534485389221,
+      "mean_beta1_entropy_nats": 3.114074431166137
+    },
+    "telugu": {
+      "n_train": 60,
+      "n_test": 60,
+      "beta_mle": 0.975552471968812,
+      "optimal_T": 1.0250601876717602,
+      "nll_beta1_mean": 1.1171799922255738,
+      "nll_optT_mean": 1.1161773597890894,
+      "global_T_gain_nats": 0.001002632436484572,
+      "gain_t": 3.814852229078887,
+      "gain_p": 0.0003285827261117027,
+      "mean_beta1_entropy_nats": 1.055223781779661
+    },
+    "abc_music": {
+      "n_train": 60,
+      "n_test": 60,
+      "beta_mle": 0.9714264326744815,
+      "optimal_T": 1.0294140311241595,
+      "nll_beta1_mean": 2.479127069650168,
+      "nll_optT_mean": 2.4772493348966456,
+      "global_T_gain_nats": 0.0018777347535230305,
+      "gain_t": 4.804675853083216,
+      "gain_p": 1.1037330231620081e-05,
+      "mean_beta1_entropy_nats": 2.3433717889300847
+    },
+    "recaman": {
+      "n_train": 60,
+      "n_test": 60,
+      "beta_mle": 1.0955920972220141,
+      "optimal_T": 0.9127484604312155,
+      "nll_beta1_mean": 0.08398760305997577,
+      "nll_optT_mean": 0.08082917063025931,
+      "global_T_gain_nats": 0.003158432429716485,
+      "gain_t": 11.48428173238832,
+      "gain_p": 1.1192979029080952e-16,
+      "mean_beta1_entropy_nats": 0.13545343862415032
+    },
+    "shuffled_wikitext": {
+      "n_train": 60,
+      "n_test": 60,
+      "beta_mle": 0.9225587036777303,
+      "optimal_T": 1.083941863009426,
+      "nll_beta1_mean": 7.196787081677782,
+      "nll_optT_mean": 7.168475002833343,
+      "global_T_gain_nats": 0.028312078844440203,
+      "gain_t": 12.466860873129963,
+      "gain_p": 3.544381479787851e-18,
+      "mean_beta1_entropy_nats": 6.4824064265536725
+    }
+  },
+  "ranked_by_gain": [
+    "shuffled_wikitext",
+    "recaman",
+    "abc_music",
+    "writingprompts",
+    "telugu",
+    "esperanto",
+    "yoruba",
+    "wikitext",
+    "gutenberg"
+  ]
+}
