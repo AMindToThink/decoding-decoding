@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A distribution-free certificate for the streaming temperature estimator</title>
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --accent: #8b2f2f;
+    --soft: #f5f2ec;
+    --rule: #d8d2c4;
+    --good: #2f6b3a;
+    --warn: #9a6b00;
+  }
+  body {
+    font-family: Georgia, "Times New Roman", serif;
+    color: var(--ink);
+    background: #fcfbf8;
+    margin: 0;
+    line-height: 1.55;
+  }
+  main { max-width: 46rem; margin: 0 auto; padding: 2rem 1.25rem 5rem; }
+  h1 { font-size: 1.9rem; line-height: 1.25; margin-bottom: .3rem; }
+  h2 { font-size: 1.35rem; margin-top: 2.6rem; border-bottom: 2px solid var(--rule); padding-bottom: .25rem; }
+  h3 { font-size: 1.05rem; margin-top: 1.8rem; }
+  .subtitle { color: #555; font-style: italic; margin-top: 0; }
+  .eq {
+    background: var(--soft);
+    border-left: 3px solid var(--accent);
+    padding: .7rem 1rem;
+    margin: 1rem 0;
+    overflow-x: auto;
+    font-family: "Cambria Math", Georgia, serif;
+    font-size: 1.02rem;
+  }
+  .eq .label { float: right; color: #888; font-size: .85rem; font-family: Georgia, serif; }
+  code, .mono {
+    font-family: "SF Mono", Consolas, Menlo, monospace;
+    font-size: .88em;
+    background: #efece4;
+    padding: .05em .3em;
+    border-radius: 3px;
+  }
+  table { border-collapse: collapse; margin: 1rem 0; width: 100%; }
+  th, td { border: 1px solid var(--rule); padding: .45rem .6rem; text-align: left; font-size: .95rem; }
+  th { background: var(--soft); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .callout {
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--good);
+    background: #f2f7f2;
+    padding: .8rem 1rem;
+    margin: 1.2rem 0;
+  }
+  .callout.warn { border-left-color: var(--warn); background: #faf6ea; }
+  .callout .head { font-weight: bold; font-variant: small-caps; letter-spacing: .03em; }
+  figure { margin: 1.5rem 0; text-align: center; }
+  figcaption { font-size: .88rem; color: #555; margin-top: .4rem; text-align: left; }
+  .toc { background: var(--soft); padding: 1rem 1.4rem; border: 1px solid var(--rule); font-size: .95rem; }
+  .toc ol { margin: .4rem 0 .2rem 1.1rem; padding: 0; }
+  sup, sub { line-height: 0; }
+  .qa { font-weight: bold; color: var(--accent); }
+  footer { margin-top: 4rem; font-size: .85rem; color: #777; border-top: 1px solid var(--rule); padding-top: 1rem; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>What can we promise about a temperature estimate when we promise nothing about the data?</h1>
+<p class="subtitle">A walkthrough of the expert-advice certificate for the counter-decoding project's streaming temperature filter.</p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ol>
+  <li>The setting: temperature, softmax, and counter-decoding</li>
+  <li>What our current estimator assumes, and why that's uncomfortable</li>
+  <li>The main finding in one paragraph</li>
+  <li>Log loss: scoring a probabilistic prediction</li>
+  <li>Temperatures as competing experts</li>
+  <li>The first guarantee: the mixture never loses badly (with full proof)</li>
+  <li>From predicting well to estimating well: a trap and its fix</li>
+  <li>The second guarantee: a built-in error bar</li>
+  <li>When the error bar is wide, and why that's honest</li>
+  <li>Drifting temperature</li>
+  <li>What this means for the project</li>
+  <li>Status of the evidence</li>
+</ol>
+</div>
+
+<h2>1. The setting: temperature, softmax, and counter-decoding</h2>
+
+<p>At every step of generating text, a language model produces one number per vocabulary word, called a <strong>logit</strong>: a raw score saying how strongly the model favors that word as the next token. Logits are not probabilities &mdash; they can be negative, and they don't sum to one. To turn them into probabilities, we use the <strong>softmax</strong> function. If the logits at step <em>t</em> are the vector <em>&#8467;<sub>t</sub></em> = (<em>&#8467;<sub>t</sub></em>[1], &hellip;, <em>&#8467;<sub>t</sub></em>[V]) over a vocabulary of V words, the probability of word <em>v</em> is:</p>
+
+<div class="eq"><span class="label">(softmax)</span>
+P(<em>v</em>) = e<sup>&#8467;<sub>t</sub>[v]</sup> &frasl; &Sigma;<sub>u</sub> e<sup>&#8467;<sub>t</sub>[u]</sup>
+</div>
+
+<p>Exponentiating makes everything positive; dividing by the sum makes it all add to one. Larger logits get larger probabilities, and the exponential means a logit advantage compounds quickly.</p>
+
+<p><strong>Temperature</strong> is a dial that reshapes this distribution. Instead of using the logits as-is, you multiply them all by a constant <em>&beta;</em> &gt; 0 (called the <em>inverse temperature</em> &mdash; high <em>&beta;</em> means low temperature) before the softmax:</p>
+
+<div class="eq"><span class="label">(tempered sampling)</span>
+P<sub>&beta;</sub>(<em>v</em>) = e<sup>&beta;&middot;&#8467;<sub>t</sub>[v]</sup> &frasl; &Sigma;<sub>u</sub> e<sup>&beta;&middot;&#8467;<sub>t</sub>[u]</sup>
+</div>
+
+<p>Large <em>&beta;</em> (cold) exaggerates differences between logits: the distribution concentrates on the top word, and text becomes deterministic and repetitive. Small <em>&beta;</em> (hot) flattens differences: the distribution spreads out, and text becomes diverse and eventually random. <em>&beta;</em> = 1 reproduces the model's own probabilities exactly.</p>
+
+<h3>A tiny worked example we'll reuse</h3>
+
+<p>Take a three-word vocabulary {A, B, C} with logits <em>&#8467;</em> = (2, 1, 0). Here is P<sub>&beta;</sub> for three settings of <em>&beta;</em> (each column computed with the formula above):</p>
+
+<table>
+<tr><th>word</th><th class="num">logit</th><th class="num">&beta; = 0.5 (hot)</th><th class="num">&beta; = 1</th><th class="num">&beta; = 2 (cold)</th></tr>
+<tr><td>A</td><td class="num">2</td><td class="num">0.506</td><td class="num">0.665</td><td class="num">0.867</td></tr>
+<tr><td>B</td><td class="num">1</td><td class="num">0.307</td><td class="num">0.245</td><td class="num">0.117</td></tr>
+<tr><td>C</td><td class="num">0</td><td class="num">0.186</td><td class="num">0.090</td><td class="num">0.016</td></tr>
+</table>
+
+<p>Same logits, three different samplers. Cold (<em>&beta;</em>=2) piles mass onto A; hot (<em>&beta;</em>=0.5) spreads it out.</p>
+
+<p><strong>Counter-decoding</strong>, this project's problem, runs the dial in reverse. We watch a stream of tokens <em>x</em><sub>1</sub>, <em>x</em><sub>2</sub>, &hellip; that someone else generated, and at each step we also know the base model's logits <em>&#8467;<sub>t</sub></em> (because we can run the same model on the same prefix). The question: <em>what temperature were they using?</em> Intuitively, if the observed tokens hug the top-logit words more tightly than <em>&beta;</em>=1 would predict, the counterparty was running cold; if surprising low-logit words keep appearing, they were running hot. Each individual token is weak evidence; the estimator's job is to accumulate it over the stream.</p>
+
+<h2>2. What our current estimator assumes, and why that's uncomfortable</h2>
+
+<p>The repo's production estimator (the streaming Laplace filter in <code>counter_decode.py</code>) does this accumulation with a running Gaussian approximation to a Bayesian posterior over log&nbsp;<em>&beta;</em>, updated once per token. Its correctness story is the classical statistics one: <em>if</em> the tokens really are drawn from P<sub>&beta;*</sub> for some true <em>&beta;</em>*, then the estimate converges to <em>&beta;</em>* as the stream grows (consistency of maximum likelihood).</p>
+
+<p>That italicized <em>if</em> is doing a lot of work. Real counterparties violate it constantly:</p>
+
+<ul>
+<li>They use <strong>top-k or nucleus sampling</strong>, which zeroes out part of the vocabulary &mdash; not a pure temperature change.</li>
+<li>They apply <strong>word blacklists</strong> (one of this project's experimental arms).</li>
+<li>In the project's closed-loop (&ldquo;GIGO&rdquo;) experiments, the text feeding the model is itself degraded, so no single fixed <em>&beta;</em> describes the stream at all.</li>
+</ul>
+
+<p>When the assumption fails, the classical theory is silent: it doesn't say the estimate is meaningless, but it doesn't say anything else either. The question this work answers: <strong>is there a version of the streaming estimator that comes with a guarantee requiring <em>no</em> assumption about how the tokens were produced &mdash; a <em>distribution-free</em> guarantee?</strong></p>
+
+<h2>3. The main finding in one paragraph</h2>
+
+<div class="callout">
+<span class="head">Main finding.</span> Yes. Reinterpret a grid of candidate temperatures as a panel of competing <em>experts</em>, run the textbook Bayesian update over them <em>on the raw logits</em>, and results from the theory of <em>prediction with expert advice</em> (Vovk's Aggregating Algorithm; Cesa-Bianchi &amp; Lugosi) apply verbatim, because the relevant loss (log loss) has exactly the property (called <em>1-mixability</em>) that makes Bayesian updating worst-case optimal. Two guarantees follow <strong>for every possible token sequence</strong>, adversarial ones included: (i) the mixture's cumulative prediction loss exceeds the best fixed temperature's loss by at most ln&nbsp;G, where G is the grid size &mdash; a constant that does not grow with stream length; and (ii) the loss profile the filter already computes yields, for free, a data-dependent <em>error bar</em>: an interval of temperatures certified to contain every temperature that fits the observed stream nearly as well as the best one. The algorithm is a one-line change to code the repo already had (drop one rescaling step); what's genuinely new is what we are <em>entitled to claim</em> about its output, and an honest accounting of what we are not.
+</div>
+
+<p>The rest of this walkthrough builds each piece from scratch.</p>
+
+<h2>4. Log loss: scoring a probabilistic prediction</h2>
+
+<p>To compare temperature candidates we need a score for &ldquo;how well did this candidate predict the token that actually appeared?&rdquo; The standard choice is <strong>log loss</strong> (also called cross-entropy or negative log-likelihood). If a forecaster assigned probability <em>p</em> to the event that actually happened, it pays:</p>
+
+<div class="eq"><span class="label">(log loss)</span>
+loss = &minus;ln <em>p</em>
+</div>
+
+<p>Three properties make this the right currency here:</p>
+
+<ul>
+<li><strong>It's small when you predicted well.</strong> <em>p</em> = 1 costs 0; <em>p</em> = 0.5 costs 0.69; <em>p</em> = 0.01 costs 4.6. Confidently wrong is expensive; the cost of <em>p</em> &rarr; 0 grows without bound.</li>
+<li><strong>It adds across steps.</strong> Because probabilities of sequences multiply, log-probabilities add, so a stream's total loss is just the per-token sum. Define the <strong>cumulative loss of temperature <em>&beta;</em></strong> after <em>n</em> tokens as
+<div class="eq"><span class="label">(L)</span>
+L<sub>n</sub>(<em>&beta;</em>) = &Sigma;<sub>t=1..n</sub> &minus;ln P<sub>&beta;</sub>(<em>x<sub>t</sub></em>)
+   = &Sigma;<sub>t=1..n</sub> [ ln(&Sigma;<sub>u</sub> e<sup>&beta;&#8467;<sub>t</sub>[u]</sup>) &minus; <em>&beta;</em>&middot;<em>&#8467;<sub>t</sub></em>[<em>x<sub>t</sub></em>] ]
+</div>
+(the second form is just the softmax formula with the logarithm taken; the first term is called a <em>log-sum-exp</em>).</li>
+<li><strong>Minimizing it = maximum likelihood.</strong> The <em>&beta;</em> with the smallest L<sub>n</sub> is exactly the maximum-likelihood estimate of the temperature given the observed stream. So &ldquo;predicts the stream well under log loss&rdquo; and &ldquo;fits the stream well as a statistical model&rdquo; are the same thing. This identity is the bridge the whole argument walks across.</li>
+</ul>
+
+<p>In the worked example, suppose token <strong>B</strong> appears. From the table: the hot expert (<em>&beta;</em>=0.5) had P(B) = 0.307, so it pays &minus;ln 0.307 = 1.18. The <em>&beta;</em>=1 expert pays &minus;ln 0.245 = 1.41. The cold expert (<em>&beta;</em>=2) pays &minus;ln 0.117 = 2.14. A mid-ranked token is evidence for hotness, and log loss prices that evidence.</p>
+
+<h2>5. Temperatures as competing experts</h2>
+
+<p>Here is the reframing at the heart of the finding. Fix a grid of G candidate values, say 121 points evenly spaced in log&nbsp;<em>&beta;</em> from e<sup>&minus;3</sup> to e<sup>3</sup>. Think of each grid point <em>&beta;<sub>g</sub></em> as an <strong>expert</strong>: at every step it announces its own full probability distribution over the next token, namely P<sub>&beta;<sub>g</sub></sub>(&middot;) = softmax(<em>&beta;<sub>g</sub></em> &middot; <em>&#8467;<sub>t</sub></em>). The experts all share the same context (the logits) but disagree about how sharply to trust it.</p>
+
+<p><em>Prediction with expert advice</em> is a branch of learning theory that asks: combining such experts online &mdash; seeing each token only after committing to a prediction &mdash; how close can your total loss come to the total loss of the <em>best expert chosen in hindsight</em>, on the <strong>worst possible</strong> sequence? The gap is called <strong>regret</strong>:</p>
+
+<div class="eq"><span class="label">(regret)</span>
+Regret<sub>n</sub> = (your cumulative loss) &minus; min<sub>g</sub> L<sub>n</sub>(<em>&beta;<sub>g</sub></em>)
+</div>
+
+<p>Note what is <em>not</em> assumed: nothing about where the tokens come from. The sequence may be generated by a clean temperature sampler, a top-k sampler, a human, or an adversary who watches your algorithm and picks each token to hurt you maximally. A bound on regret that holds for every sequence is what &ldquo;distribution-free&rdquo; means in this walkthrough.</p>
+
+<p>The combining algorithm is one we already know: <strong>Bayesian updating over the grid</strong>. Maintain a weight <em>w<sub>g</sub></em> on each expert (starting from a prior, e.g. uniform <em>&pi;</em><sub>0</sub>(g) = 1/G). To predict, average the experts' distributions with these weights. After seeing token <em>x<sub>t</sub></em>, multiply each weight by the probability that expert assigned to <em>x<sub>t</sub></em>, then renormalize:</p>
+
+<div class="eq"><span class="label">(update)</span>
+<em>w<sub>g</sub></em> &nbsp;&larr;&nbsp; <em>w<sub>g</sub></em> &middot; P<sub>&beta;<sub>g</sub></sub>(<em>x<sub>t</sub></em>) &nbsp;&frasl;&nbsp; (normalizer)
+</div>
+
+<p>Experts that priced the actual token high gain weight; experts that called it improbable lose weight. Unrolling the recursion, the weight after <em>n</em> steps has a closed form worth staring at:</p>
+
+<div class="eq"><span class="label">(weights = prior &times; performance)</span>
+<em>w<sub>g</sub></em>(n) &nbsp;=&nbsp; <em>&pi;</em><sub>0</sub>(g) &middot; e<sup>&minus;L<sub>n</sub>(&beta;<sub>g</sub>)</sup> &frasl; &Sigma;<sub>h</sub> <em>&pi;</em><sub>0</sub>(h) &middot; e<sup>&minus;L<sub>n</sub>(&beta;<sub>h</sub>)</sup>
+</div>
+
+<p>Each expert's weight is its prior times e<sup>&minus;(its cumulative loss)</sup>: exponential weighting by past performance. In learning theory this algorithm is the <em>exponentially weighted average forecaster</em>, and for log loss specifically it coincides with <em>Vovk's Aggregating Algorithm</em>. In statistics it's just Bayes' rule. Same equations, two literatures &mdash; and the second literature's theorems are the ones that need no assumptions about the data.</p>
+
+<p>Continuing the worked example with a uniform prior (1/3 each) after observing that one token B: the unnormalized weights are (1/3)(0.307), (1/3)(0.245), (1/3)(0.117) for <em>&beta;</em> = 0.5, 1, 2; normalizing gives <strong>(0.459, 0.366, 0.175)</strong>. One mid-ranked token has already tilted belief toward the hot expert.</p>
+
+<div class="callout warn">
+<span class="head">One load-bearing detail.</span> The experts must be <em>fixed</em>: expert g must always predict softmax(<em>&beta;<sub>g</sub></em> &middot; raw logits). The repo's existing grid filter (<code>discrete_grid_update_batched</code>) instead rescales the logits each step by the current posterior mean (the &ldquo;bootstrap reference&rdquo; &#8467;/&beta;&#770;), which makes every expert's prediction depend on the aggregate filter state. That breaks the proof below, so <em>no regret guarantee applies to that code as written</em>. The new <code>grid_mixture_update_batched</code> is the same Bayesian update minus that one rescaling &mdash; that single change is the entire algorithmic content of this work.
+</div>
+
+<h2>6. The first guarantee: the mixture never loses badly</h2>
+
+<p>Let the <strong>mixture's loss</strong> at step <em>t</em> be the log loss of the weighted-average prediction, <em>m<sub>t</sub></em> = &Sigma;<sub>g</sub> <em>w<sub>g</sub></em>(t&minus;1) P<sub>&beta;<sub>g</sub></sub>(<em>x<sub>t</sub></em>). The guarantee:</p>
+
+<div class="callout">
+<span class="head">Theorem (regret of the Bayes mixture).</span> For <em>every</em> token sequence and every grid point g,
+<div class="eq">
+&Sigma;<sub>t=1..n</sub> &minus;ln <em>m<sub>t</sub></em> &nbsp;&le;&nbsp; L<sub>n</sub>(<em>&beta;<sub>g</sub></em>) + ln(1/<em>&pi;</em><sub>0</sub>(g))
+</div>
+With a uniform prior, the mixture's total loss is within <strong>ln G</strong> of the best grid temperature in hindsight. For G = 121 that's ln 121 &asymp; 4.8 nats &mdash; total, over the whole stream, no matter how long.
+</div>
+
+<h3>The proof, in full (it's three steps)</h3>
+
+<p><strong>Step 1: the mixture's total loss telescopes.</strong> The per-step mixture probability is <em>m<sub>t</sub></em> = &Sigma;<sub>g</sub> <em>w<sub>g</sub></em>(t&minus;1) P<sub>g,t</sub>, where P<sub>g,t</sub> is shorthand for P<sub>&beta;<sub>g</sub></sub>(<em>x<sub>t</sub></em>). Define the running &ldquo;evidence&rdquo; Z<sub>t</sub> = &Sigma;<sub>g</sub> <em>&pi;</em><sub>0</sub>(g) &middot; P<sub>g,1</sub>P<sub>g,2</sub>&hellip;P<sub>g,t</sub> (with Z<sub>0</sub> = 1). Using the closed form of the weights from section 5,</p>
+
+<div class="eq">
+<em>m<sub>t</sub></em> = &Sigma;<sub>g</sub> [<em>&pi;</em><sub>0</sub>(g)&middot;P<sub>g,1</sub>&hellip;P<sub>g,t&minus;1</sub> &frasl; Z<sub>t&minus;1</sub>] &middot; P<sub>g,t</sub>
+   = Z<sub>t</sub> &frasl; Z<sub>t&minus;1</sub>
+</div>
+
+<p>So the product of all per-step mixture probabilities collapses (&ldquo;telescopes&rdquo;): <em>m</em><sub>1</sub><em>m</em><sub>2</sub>&hellip;<em>m<sub>n</sub></em> = (Z<sub>1</sub>/Z<sub>0</sub>)(Z<sub>2</sub>/Z<sub>1</sub>)&hellip;(Z<sub>n</sub>/Z<sub>n&minus;1</sub>) = Z<sub>n</sub>. Taking &minus;ln of both sides, and recognizing P<sub>g,1</sub>&hellip;P<sub>g,n</sub> = e<sup>&minus;L<sub>n</sub>(&beta;<sub>g</sub>)</sup>:</p>
+
+<div class="eq"><span class="label">(key identity)</span>
+&Sigma;<sub>t</sub> &minus;ln <em>m<sub>t</sub></em> &nbsp;=&nbsp; &minus;ln Z<sub>n</sub> &nbsp;=&nbsp; &minus;ln &Sigma;<sub>g</sub> <em>&pi;</em><sub>0</sub>(g) e<sup>&minus;L<sub>n</sub>(&beta;<sub>g</sub>)</sup>
+</div>
+
+<p><strong>Step 2: drop all terms but one.</strong> A sum of positive terms is at least any single term, so for any g: Z<sub>n</sub> &ge; <em>&pi;</em><sub>0</sub>(g) e<sup>&minus;L<sub>n</sub>(&beta;<sub>g</sub>)</sup>. Since &minus;ln is decreasing, &minus;ln Z<sub>n</sub> &le; L<sub>n</sub>(<em>&beta;<sub>g</sub></em>) + ln(1/<em>&pi;</em><sub>0</sub>(g)).</p>
+
+<p><strong>Step 3: read it off.</strong> The left side is the mixture's total loss (step 1); the right side is any expert's loss plus a constant. Done. &#8718;</p>
+
+<p>Notice what made it work: log loss turned a <em>product</em> structure into the additive losses, and Bayes' rule kept the bookkeeping exact at every step (no inequality was needed until step 2, which costs only the prior term). This exactness is what learning theorists call the <em>1-mixability</em> of log loss; for most other losses no algorithm achieves a constant regret like this. Two bonus facts, both verified by unit tests in <code>tests/test_grid_mixture.py</code>: the bound needs <em>no</em> bound on the losses themselves (an expert can be infinitely wrong and the theorem still holds), and the vocabulary size never appears. In the worked example: mixture probability of B was (0.307+0.245+0.117)/3 = 0.223, so the mixture paid 1.50 while the best expert paid 1.18 &mdash; regret 0.32 after one step, against a lifetime budget of ln 3 &asymp; 1.10.</p>
+
+<h2>7. From predicting well to estimating well: a trap and its fix</h2>
+
+<p>So far this certifies the mixture as a <em>predictor</em>. But the project wants an <em>estimate of the temperature</em> &mdash; a number to report. Here the work hit (and corrected) a genuine subtlety, caught by an adversarial review of the first draft of this theory.</p>
+
+<p><strong>The trap.</strong> The natural reading of &ldquo;the filter's estimate&rdquo; is the posterior <em>mean</em>, &Sigma;<sub>g</sub> <em>w<sub>g</sub></em><em>&beta;<sub>g</sub></em>. It is tempting to argue: the mixture predicts almost as well as the best temperature (section 6), therefore the posterior mean must be close to the best temperature. <strong>This is false.</strong> The regret theorem controls the loss of the weighted <em>average of distributions</em>, which is not the distribution of any single temperature. Concretely: suppose the data are genuinely ambiguous between very hot (<em>&beta;</em> = 0.1) and very cold (<em>&beta;</em> = 10), so the posterior puts weight &frac12; on each. The mixture &mdash; half hot-distribution, half cold-distribution &mdash; predicts fine, and the regret bound is satisfied. The posterior mean is <em>&beta;</em> &asymp; 5, a temperature that fits the stream <em>terribly</em> and that the posterior itself assigns essentially zero weight. Averaging two good answers produced a bad one; the inequality (Jensen's) needed to go from the mixture's loss to the mean's loss points the wrong way.</p>
+
+<p><strong>The fix.</strong> Report the posterior <strong>mode</strong> (the highest-weight grid point), not the mean. With a uniform prior, look at the weights formula: <em>w<sub>g</sub></em>(n) &prop; e<sup>&minus;L<sub>n</sub>(&beta;<sub>g</sub>)</sup>, which is largest exactly where L<sub>n</sub> is smallest. So:</p>
+
+<div class="callout">
+<span class="head">MAP = best-fit identity.</span> With a uniform prior, the grid point with the highest posterior weight <em>is</em> argmin<sub>g</sub> L<sub>n</sub>(<em>&beta;<sub>g</sub></em>) &mdash; the maximum-likelihood / best-fitting temperature on the grid, by definition, with zero slack and no probabilistic argument needed. (A non-uniform prior shifts this by at most its log-ratio, a bookkeeping term.)
+</div>
+
+<p>This sounds almost too cheap, and in a sense it is: the deep theorem (regret) certifies the <em>forecasts</em>, while the estimation claim rides on an exact algebraic identity plus one more idea &mdash; the error bar &mdash; below. Keeping straight which claim rests on which leg is most of the intellectual content here.</p>
+
+<h2>8. The second guarantee: a built-in error bar</h2>
+
+<p>A point estimate without an uncertainty is bait for overclaiming (this project has an audit trail on that subject). The grid filter stores, at all times, the full loss profile {L<sub>n</sub>(<em>&beta;<sub>g</sub></em>) : g = 1..G} &mdash; and that profile <em>is</em> an error bar, via one classical fact.</p>
+
+<p><strong>The loss curve is convex (bowl-shaped) in <em>&beta;</em>.</strong> Calculus on the (L) formula from section 4 gives, for each step's term, first derivative E<sub>q<sub>&beta;</sub></sub>[&#8467;<sub>t</sub>] &minus; &#8467;<sub>t</sub>[x<sub>t</sub>] and second derivative <strong>Var<sub>q<sub>&beta;</sub></sub>(&#8467;<sub>t</sub>)</strong> &mdash; the mean and variance of the logit value of a token drawn from P<sub>&beta;</sub>. (If you've seen exponential families: <em>&beta;</em> is a natural parameter and the log-sum-exp is its cumulant function; its second derivative is always a variance.) A variance is never negative, so summing over steps:</p>
+
+<div class="eq"><span class="label">(curvature = information)</span>
+L<sub>n</sub>&Prime;(<em>&beta;</em>) = &Sigma;<sub>t=1..n</sub> Var<sub>q<sub>&beta;,t</sub></sub>(&#8467;<sub>t</sub>) &nbsp;&ge;&nbsp; 0
+</div>
+
+<p>A convex curve dips down to its minimum and climbs back up, so the set of temperatures whose loss is within a tolerance <em>c</em> of the minimum &mdash; the <strong>sub-level set</strong> &mdash; is a single interval:</p>
+
+<div class="eq"><span class="label">(error bar)</span>
+I<sub>c</sub> = { <em>&beta;</em> : L<sub>n</sub>(<em>&beta;</em>) &le; min L<sub>n</sub> + <em>c</em> }
+</div>
+
+<figure>
+<svg viewBox="0 0 460 240" width="100%" style="max-width:460px" role="img" aria-label="Convex loss curve with level-set interval">
+  <line x1="40" y1="210" x2="440" y2="210" stroke="#555" stroke-width="1.5"/>
+  <line x1="40" y1="210" x2="40" y2="20" stroke="#555" stroke-width="1.5"/>
+  <text x="430" y="228" font-size="13" fill="#333">log &beta;</text>
+  <text x="14" y="32" font-size="13" fill="#333">L&#8345;</text>
+  <path d="M 60 40 Q 230 330 420 60" fill="none" stroke="#8b2f2f" stroke-width="2.5"/>
+  <line x1="60" y1="138" x2="420" y2="138" stroke="#2f6b3a" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="330" y="132" font-size="12" fill="#2f6b3a">min L&#8345; + c</text>
+  <line x1="136" y1="138" x2="136" y2="210" stroke="#2f6b3a" stroke-width="1"/>
+  <line x1="345" y1="138" x2="345" y2="210" stroke="#2f6b3a" stroke-width="1"/>
+  <line x1="136" y1="200" x2="345" y2="200" stroke="#2f6b3a" stroke-width="4"/>
+  <text x="205" y="193" font-size="12" fill="#2f6b3a">interval I&#8323;</text>
+  <circle cx="240" cy="186" r="4" fill="#8b2f2f"/>
+  <text x="225" y="176" font-size="12" fill="#8b2f2f">&beta;&#770;</text>
+</svg>
+<figcaption><strong>Figure.</strong> The cumulative loss L<sub>n</sub> as a function of log&nbsp;<em>&beta;</em> is bowl-shaped. The reported estimate &beta;&#770; sits at the bottom; the interval I<sub>c</sub> collects every temperature fitting the stream within <em>c</em> nats of the best. Steep bowl &rArr; narrow interval &rArr; the data pin the temperature down. Shallow bowl &rArr; wide interval &rArr; they don't, and the filter says so.</figcaption>
+</figure>
+
+<p>The interpretation requires no distributional assumption at all: <em>every temperature outside I<sub>c</sub> fits the observed stream worse than the best temperature by more than c nats of log-likelihood.</em> That is a statement about the data in hand, true sequence-by-sequence. We take <em>c</em> = ln G by default, the same constant as the regret budget, and the code (<code>grid_mixture_level_set</code>) reads the interval endpoints directly off the stored profile &mdash; no extra passes, no asymptotic approximation. If the stream really did come from a fixed P<sub>&beta;*</sub>, standard likelihood theory additionally makes I<sub>c</sub> a (conservative) confidence interval; the point is that its distribution-free reading stands even when no such <em>&beta;</em>* exists.</p>
+
+<h2>9. When the error bar is wide, and why that's honest</h2>
+
+<p>The curvature formula tells you exactly when the bar must be wide: the per-step curvature is the <em>variance of the logits under the tempered distribution</em>. If the model's logits are peaked &mdash; one token towers over the rest, as in low-temperature text, code, or repetition &mdash; then a sample from P<sub>&beta;</sub> is nearly always that one token, the logit variance is nearly zero, and the loss curve is nearly flat in <em>&beta;</em>. Flat curve, wide interval.</p>
+
+<p>This is not a defect; it is the truth about identifiability. If the top token has probability 0.99 at every plausible temperature, then hot and cold samplers emit indistinguishable streams, and <em>no estimator on earth</em> could tell them apart from the tokens. A method that returned a tight estimate in that regime would be manufacturing confidence. The certificate widens exactly where certainty is impossible &mdash; and (a nice piece of structure) the two guarantees trade off in opposite directions: peaked logits make the <em>regret</em> side easier (everyone predicts the obvious token, the mixture too) while making the <em>estimation</em> side weaker. A flat-text stream is easy to predict and hard to fingerprint.</p>
+
+<h2>10. Drifting temperature</h2>
+
+<p>If the counterparty changes the dial mid-stream, &ldquo;the best fixed <em>&beta;</em>&rdquo; is the wrong yardstick. Expert-advice theory has a standard remedy, <strong>Fixed-Share</strong> (Herbster &amp; Warmuth, 1998): after each Bayes update, blend a small fraction <em>&alpha;</em> of the weight back toward the prior &mdash; w &larr; (1&minus;<em>&alpha;</em>)w + <em>&alpha;&pi;</em><sub>0</sub> &mdash; so no expert's weight ever decays past recovery and the posterior can re-mobilize after a switch. This is implemented as <code>switch_rate</code> (and turns out to be the principled version of the existing filter's <code>memory_decay</code> heuristic). The guarantee it buys, again per-sequence: against a comparator allowed to switch temperatures m times, regret &asymp; m&middot;ln(Gn/m).</p>
+
+<p>One honest caveat, again caught in review: that is a <em>forecasting</em> guarantee. The clean estimation story of sections 7&ndash;8 (mode = best fit, level-set bar) is proven for the static case only; per-segment estimation bounds do not follow automatically, and short segments are simply unidentifiable. So: drift-tracking yes, drift-certificates no &mdash; and the writeup must keep those apart.</p>
+
+<h2>11. What this means for the project</h2>
+
+<h3>What we may now claim</h3>
+<p>The filter's headline output can be stated with no model of the counterparty at all: <em>&ldquo;among all temperature explanations, &beta;&#770; fits the observed stream best, everything outside the reported interval fits worse by at least c nats, and the filter's own next-token predictions were within ln G of the best temperature's &mdash; guaranteed for this sequence, whatever produced it.&rdquo;</em></p>
+
+<h3>What we still may not claim &mdash; and why that's a feature</h3>
+<p>The certified target is the <strong>in-hindsight best-fit (&ldquo;effective&rdquo;) temperature</strong>, <em>not the dial the counterparty physically set</em>. No distribution-free statement could certify the dial: if the counterparty used top-k sampling, their dial setting is simply not recoverable from a stream that no pure-temperature sampler would produce. But for this project that reframing is an asset, twice over:</p>
+<ul>
+<li><strong>It matches our experiments.</strong> The blacklist, top-k, and GIGO arms are <em>deliberately</em> misspecified counterparties &mdash; there the effective temperature is the only well-defined target, and it's exactly what the certificate tracks.</li>
+<li><strong>It defuses a standing objection.</strong> The claim audit pressed on the GIGO regime, where the filter reports extreme &beta;&#770; values: is that filter failure? The certificate gives a precise answer: the reported &beta;&#770; provably best-fits the emitted token salad &mdash; the strange number is a property of the sequence, not a malfunction of the estimator.</li>
+</ul>
+<p>Conversely, post-audit discipline demands the paper say plainly: <em>we do not certify recovery of the dial setting.</em></p>
+
+<h3>Consequences for the codebase</h3>
+<ul>
+<li>The guarantee attaches to the new <code>grid_mixture_update_batched</code> (raw logits, fixed experts) &mdash; <em>not</em> to the existing bootstrap-rescaled grid filter, and not automatically to the Laplace filter.</li>
+<li>The Laplace filter is <strong>not</strong> supplanted: it remains the fast approximation, and is in fact provably <em>unable</em> to carry a uniform worst-case guarantee of this kind (its point-update structure hits a known obstruction &mdash; Foster et al. 2018, &ldquo;Logistic Regression: The Importance of Being Improper&rdquo;: for losses like this one, only <em>improper</em> predictors, ones outside the temperature family itself &mdash; like our mixture &mdash; can be worst-case safe). Pre-registered hypothesis H4 tests empirically whether the Laplace estimates land inside the certified bar; if they do, the certificate informally extends to the paper's headline numbers, and if not, the paper scopes its claims to grid outputs.</li>
+<li>Error bars become reportable from quantities the filter already logs &mdash; a new, falsifiable deliverable for the paper's figures.</li>
+</ul>
+
+<h2>12. Status of the evidence</h2>
+
+<p>All experiments were pre-registered (hypotheses, sample sizes, statistical tests, and decision thresholds committed in <code>paper/grid_certificate_prereg.md</code> <em>before</em> any data were generated).</p>
+
+<table>
+<tr><th>Hypothesis</th><th>What it checks</th><th>Status at time of writing</th></tr>
+<tr><td><strong>H1</strong> (coverage)</td><td>On synthetic streams genuinely sampled at <em>&beta;</em>* = 1, the interval contains the true best-fit temperature</td><td><strong>200 / 200 streams covered</strong></td></tr>
+<tr><td><strong>H2</strong> (non-vacuousness)</td><td>On real Qwen2.5-3B text at temperature 1 (1000 tokens), the bar is usefully narrow (median width &lt; 0.2 in log &beta;)</td><td>Model streams generating; pending</td></tr>
+<tr><td><strong>H3</strong> (honest degradation)</td><td>The bar is wider on peaked-logit streams than natural ones</td><td><strong>Confirmed direction</strong>: median width 0.45 (peaked) vs 0.25 (natural)</td></tr>
+<tr><td><strong>H4</strong> (transfer to Laplace)</td><td>The Laplace point estimates fall inside the certified bar on real streams</td><td>Model streams generating; pending</td></tr>
+</table>
+
+<p>The supporting math is exercised directly by unit tests (<code>tests/test_grid_mixture.py</code>): the telescoping identity holds to 10<sup>&minus;8</sup>, the MAP&nbsp;=&nbsp;argmin identity holds exactly, and &mdash; the test that matters most &mdash; on a sequence where each token is <em>chosen adversarially to be the mixture's least-predicted word</em>, the realized regret still lands under ln G, as the theorem demands.</p>
+
+<footer>
+Counter-decoding project &mdash; grid-mixture certificate walkthrough.
+Theory references: Cesa-Bianchi &amp; Lugosi, <em>Prediction, Learning, and Games</em> (chs. 3, 9); Vovk's Aggregating Algorithm; Herbster &amp; Warmuth (1998), &ldquo;Tracking the Best Expert&rdquo;; Foster, Kale, Luo, Mohri &amp; Sridharan (2018), arXiv:1803.09349.
+Code: <code>src/decoding_decoding/counter_decode.py</code> (<code>grid_mixture_*</code>); protocol: <code>paper/grid_certificate_prereg.md</code>; theory note: <code>theory_options.md</code> &sect;5.
+</footer>
+
+</main>
+</body>
+</html>
