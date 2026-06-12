@@ -723,6 +723,11 @@ def grid_mixture_level_set(
     β. Default threshold c = ln(1/π₀[best expert]) (uniform prior: ln G), the
     same constant as the regret guarantee.
 
+    "Distribution-free" in both senses: no assumption on the token process, and
+    no log-normal prior / Gaussian-posterior approximation either — with a
+    uniform prior this is a profile-likelihood interval around the grid MLE,
+    and the prior enters only through the default threshold c.
+
     Returns:
         (lo, hi): each (B,), bounds in log β. Resolution-limited by the grid:
         the continuum MLE can sit up to one grid spacing outside.

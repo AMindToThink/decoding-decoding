@@ -304,6 +304,19 @@ $g$. (ii)~Immediate from $w_g(n) \propto e^{-L_n(\beta_g)}$.
 $\beta$ minus an affine function, hence convex; differentiate twice.
 \end{proof}
 
+``Distribution-free'' is doing double duty here, and both senses hold. The
+first is over the data process: the lemma assumes nothing about how $x_{1:n}$
+was produced. The second is over the estimator's own modeling assumptions:
+with uniform $\pi_0$ the posterior mode in (ii) \emph{is} the grid MLE --- the
+log-normal prior of the Laplace filter does no work --- and the sub-level set
+in (iii) is a profile-likelihood interval, computed from the exact grid
+posterior rather than a Gaussian (Laplace) approximation. The prior survives
+only as a constant: the default threshold $c = \ln G$ is the uniform-prior
+regret budget, and a different $\pi_0$ rescales the bar's threshold, never its
+validity. What remains is a support assumption --- the grid spans a bounded
+range of $\log\beta$ at finite resolution --- the far weaker residue of the
+log-normal's tails.
+
 Three honest caveats. First, the certificate is relative to the in-hindsight
 best-fit $\beta$, \emph{not} the dial a counterparty actually set; under
 misspecified decoders (\S\ref{sec:positive}'s blacklist and top-$k$, the

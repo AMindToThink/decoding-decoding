@@ -139,6 +139,24 @@ EVERY token sequence — no assumption that tokens were sampled from any `P_β`:
    m-segment β sequence. The estimation reading (2)–(3) does NOT survive segmentation;
    claim tracking only.
 
+**Two readings of "distribution-free" (both hold).** (a) *Data-process-free*: the
+guarantees above hold per-sequence, with no assumption that tokens come from any
+`P_β` — the layer that matters under misspecified decoders (blacklist, top-k, GIGO),
+where no true β exists. (b) *Prior-free / approximation-free*: with a uniform grid
+prior the MAP **is** the grid MLE (the Laplace filter's log-normal prior does no
+work), and the level set is a profile-likelihood interval computed from the exact
+grid posterior — no Gaussian-shape (Laplace) approximation either. The prior enters
+only through the constant `c = ln(1/π₀[g*])`: changing it rescales the bar's
+threshold, never its validity. Reading (b) is what "get rid of the log-normal" asks
+for; reading (a) is strictly stronger and becomes load-bearing only under
+misspecification — under well-specification the in-hindsight best fit converges to
+the dial setting and the two readings coincide (H1: 200/200 coverage of the
+continuum MLE). H4 retro-reads the Laplace machinery through this lens: the faithful
+variant's log-normal assumptions were benign (88/96 inside the prior-free bar); the
+original linearized filter's assumptions genuinely bite (10/96). Honest residue: the
+grid still assumes bounded support (`log β ∈ [−3, 3]` at 0.05 resolution) — a much
+weaker support assumption replacing the log-normal's tails.
+
 **Why the mixture and not the Laplace filter.** The per-token loss in β has
 exp-concavity constant ~`e^{−β·(logit gap)}`, so proper point-estimate updates (the
 Laplace/ONS-style filter) cannot carry uniform per-sequence guarantees even in 1-d —
