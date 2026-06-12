@@ -91,22 +91,11 @@ reading back its own constrained text, has inferred the constraint.
 probability on that token across the sequence
 ($\Delta p_{\text{late--early}} = \blRankOneDeltaP$ for the top token, and below
 an unbanned control $\blRankOneTvc$, 95\% CI $[\blRankOneTvcLo,\blRankOneTvcHi]$),
-with an early-position contrast $\approx 0$ as a sanity check
-(Figure~\ref{fig:blacklist}).
+with an early-position contrast $\approx 0$ as a sanity check.
 \textbf{Top-$k$:} truncating to the top $k$ produces no cliff at $k$ itself;
 probability instead concentrates on the head, more so the tighter the cutoff.
 So the model tracks its decoder, though the top-$k$ signal is broad sharpening,
 not a $k$-specific edge.
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.52\linewidth]{fig_blacklist_dropoff.png}
-\caption{With one token banned during generation, the model's predicted
-probability on the banned token falls across the sequence (late minus early,
-$\Delta p = \blRankOneDeltaP$ for the top token) and below an unbanned control,
-evidence the model has inferred the blacklist from its own text.}
-\label{fig:blacklist}
-\end{figure}
 
 % =====================================================================
 \section{A streaming estimator for the effective temperature}\label{sec:filter}
@@ -222,9 +211,7 @@ bar in (iii) is an exact profile-likelihood interval (not a Gaussian
 approximation); the prior survives only as the constant $c=\ln G$. We report the
 mode, not the posterior mean: by (ii) it equals the best-fit bucket with zero
 slack, whereas the mean of the posterior over a log-spaced grid (unimodal but
-skewed, since $e^{-L_n}$ is log-concave by (iii)) is mildly biased.
-
-\paragraph{Three honest caveats.}
+skewed, since $e^{-L_n}$ is log-concave by (iii)) is mildly biased.\footnote{Three honest caveats.
 First, the certificate is relative to the in-hindsight best-fit $\beta$, not the
 dial a counterparty actually set; under a misspecified decoder (a top-$k$ cutoff,
 a blacklist) no single ``true'' $\beta$ describes the stream, and the best-fit
@@ -236,31 +223,7 @@ certifies \emph{fit to the observed stream}, and a narrow bar means $\beta$ is
 degrade in opposite directions. Third, the guarantee attaches to the mixture, not
 a point estimator (proper online predictors face an exp-concavity obstruction
 that improper mixtures avoid \citep{foster2018logistic}), so transferring it to
-the fast filter (Section~\ref{sec:filter}) is an empirical, pre-registered claim.
-
-\paragraph{Pre-registered validation.}
-We committed four hypotheses, with sample sizes and thresholds, \emph{before}
-generating any data (\texttt{paper/grid\_certificate\_prereg.md}); the bar uses
-$c=\ln G$ on a $121$-bucket grid spanning $\log\beta\in[-3,3]$.
-Table~\ref{tab:grid_certificate} reports the outcome. The bar covered the
-continuum MLE on every well-specified synthetic stream (\gridCertCoverage); on
-real Qwen-2.5-3B streams at $\beta{=}1$ the median width was
-\gridCertMedianWidthBtOne{} in $\log\beta$ (the grid-resolution floor; the bar
-is far from vacuous where logits carry temperature information) and widened on
-peaked-logit streams exactly as (iii) predicts. The transfer check to the
-streaming filter of Section~\ref{sec:filter} passed (\gridCertFaithfulAgree{} of
-estimates inside the bar), while the original $\beta{=}1$-linearized filter landed
-inside on only \gridCertOriginalAgree{}, so the certificate extends to the
-corrected filter's outputs, not the original's.
-
-\begin{table}[t]
-\centering
-\input{\tabdir/tab_grid_certificate.tex}
-\caption{Pre-registered evaluation of the certificate (hypotheses, sample sizes,
-and thresholds committed before any data were generated). Real streams are
-Qwen-2.5-3B, $32$ prompts, $1000$ tokens.}
-\label{tab:grid_certificate}
-\end{table}
+the fast filter (Section~\ref{sec:filter}) is an empirical, pre-registered claim.}
 
 % =====================================================================
 \section{Generating better, and limitations}\label{sec:gen}
