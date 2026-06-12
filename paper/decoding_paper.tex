@@ -157,7 +157,9 @@ UC~Berkeley Stat~210A lecture notes:
 A.~Kristiadi, ``Fisher Information Matrix'':
 \url{https://agustinus.kristia.de/blog/fisher-information/}.}
 \textbf{Newton's method} updates a parameter by $\theta \leftarrow \theta -
-\text{slope}/\text{curvature}$, i.e.\ score over Fisher.\footnote{``Taylor Series
+\text{slope}/\text{curvature}$; when maximizing a log-likelihood the curvature is
+negative and the Fisher information is minus that curvature, so the step is
+$\theta \leftarrow \theta + \text{score}/\text{Fisher}$, toward the mode.\footnote{``Taylor Series
 and Newton's Method,'' suzyahyah.github.io:
 \url{https://suzyahyah.github.io/calculus/optimization/2018/04/06/Taylor-Series-Newtons-Method.html}.}
 The \textbf{Laplace approximation} replaces a complicated posterior distribution
