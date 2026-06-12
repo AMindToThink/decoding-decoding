@@ -91,6 +91,28 @@ def test_all_macro_names_are_letter_only():
     assert not bad, f"macro names with non-letters break TeX parsing: {bad}"
 
 
+GRID_CERT_MACROS = ROOT / "data" / "grid_certificate" / "macros.tex"
+
+
+def test_referenced_grid_certificate_macros_are_defined():
+    """Every \\gridCert* macro used in the paper is defined in the
+    grid-certificate macros file (input directly, not via paper_macros.tex,
+    because its source results.json is tracked while the other macro sources
+    are regeneratable-only)."""
+    defined = set()
+    for line in GRID_CERT_MACROS.read_text().splitlines():
+        m = NEWCMD_RE.match(line)
+        if m:
+            defined.add(m.group(1))
+    used = set(USE_RE.findall(paper_text()))
+    referenced = {n for n in used if n.startswith("gridCert")}
+    assert referenced, "expected the paper to reference gridCert* macros"
+    missing = sorted(referenced - defined)
+    assert not missing, f"grid-certificate macros used but not defined: {missing}"
+    bad = [n for n in defined if not n.isalpha()]
+    assert not bad, f"macro names with non-letters break TeX parsing: {bad}"
+
+
 def test_no_handtyped_result_numbers_in_prose():
     """A generated result value must not appear literally in the paper .tex.
 

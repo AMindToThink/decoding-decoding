@@ -33,6 +33,7 @@ counter_decoding memo, "Two implementation notes").
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Tuple
 
@@ -454,6 +455,12 @@ def discrete_grid_update_batched(
         log P(x_t | β_g, ℓ*_t)
           = β_g · ℓ*_t[x_t] − logsumexp_v(β_g · ℓ*_t[v])
 
+    NOTE (guarantees): because ℓ*_t = ℓ_t / β̂_t depends on the *aggregate*
+    posterior state, the per-grid-point "experts" here are not fixed forecasters,
+    so the per-sequence regret guarantees of the Bayes-mixture / aggregating
+    algorithm do NOT apply to this function. For the guarantee-bearing variant
+    that scores experts on raw logits, see ``grid_mixture_update_batched``.
+
     Implementation: loop over `grid_chunk` β values at a time to keep peak
     memory at O(B · grid_chunk · V) instead of O(B · G · V).
 
@@ -523,6 +530,220 @@ def init_discrete_grid_state(
     prior_pmf = init_prior_pmf(beta_grid, kind=prior_kind, sigma_0=sigma_0, **prior_kwargs)
     pi = prior_pmf.unsqueeze(0).expand(batch_size, -1).contiguous()
     return DiscreteGridState(pi=pi, beta_grid=beta_grid)
+
+
+# ---------------------------------------------------------------------------
+# Guarantee-bearing grid mixture filter (prediction with expert advice)
+# ---------------------------------------------------------------------------
+#
+# Each grid point β_g is a fixed "expert" forecasting P_g(x_t) = softmax(β_g·ℓ_t)[x_t]
+# on the RAW logits (no bootstrap rescaling — that is the one difference from
+# ``discrete_grid_update_batched``, and it is load-bearing: fixed experts are what
+# make the regret guarantees below hold). The filter is the Bayes mixture over
+# experts, which for log loss is exactly Vovk's Aggregating Algorithm at η=1
+# (log loss is 1-mixable; Cesa-Bianchi & Lugosi, "Prediction, Learning, and
+# Games", ch. 3 & 9). Guarantees, per-sequence (i.e. for ARBITRARY token
+# streams, with no assumption that tokens were sampled from any P_β):
+#
+#   Forecasting:  Σ_t −ln(mixture prob of x_t) ≤ L_n(β_g) + ln(1/π₀[g])  ∀g,
+#                 since mix_loss = −ln Σ_g π₀[g]·e^{−L_n[g]} (telescoping).
+#                 Uniform prior ⇒ regret vs best grid expert ≤ ln G.
+#   Estimation:   with uniform prior the grid MAP equals argmin_g L_n(β_g)
+#                 (follow-the-leader) — the in-hindsight best-fit "effective"
+#                 inverse temperature on the grid. L_n(β) is convex in β with
+#                 L_n''(β) = Σ_t Var_{softmax(βℓ_t)}(ℓ_t), so the level set
+#                 {β : L_n(β) ≤ min L_n + c} is an interval whose width is the
+#                 honest, data-dependent uncertainty (wide exactly when peaked
+#                 logits make β unidentifiable). ``grid_mixture_level_set``
+#                 reads this interval off the stored loss profile.
+#   Drift:        ``switch_rate`` α > 0 is Fixed-Share (Herbster & Warmuth 1998,
+#                 share-to-initial-prior variant; cf. ``memory_decay`` in the
+#                 bootstrap filter): exact Bayes under a switching prior, with
+#                 per-sequence regret ≈ m·ln(Gn/m) vs the best m-segment β
+#                 sequence. Tracking/forecasting guarantee only — the MAP/level-set
+#                 estimation reading is for the static (α=0) case.
+#
+# These guarantees are relative to the in-hindsight best-fit β (the sequence
+# MLE / KL projection), NOT the dial a counterparty actually set; under
+# misspecification (top-k, blacklists, GIGO loops) the former is the natural
+# definition of effective temperature. Point-estimate filters (the Laplace
+# updates above ≈ online Newton step) provably cannot carry uniform per-sequence
+# guarantees for losses of this type (Foster et al. 2018, "Logistic Regression:
+# The Importance of Being Improper", arXiv:1803.09349) — the mixture is improper
+# and sidesteps that obstruction.
+
+
+@dataclass
+class GridMixtureState:
+    """State of the expert-advice grid mixture: loss profile + forecaster weights."""
+
+    cum_loss: torch.Tensor   # (B, G) — L_n(β_g): cumulative log loss per expert
+    log_w: torch.Tensor      # (B, G) — normalized log forecaster weights
+    mix_loss: torch.Tensor   # (B,)   — cumulative log loss of the mixture forecast
+    beta_grid: torch.Tensor  # (G,)   — β values (fixed experts)
+    log_prior: torch.Tensor  # (G,)   — log π₀ over the grid
+
+    def beta_map(self) -> torch.Tensor:
+        """(B,) grid MAP = argmax_g (log π₀[g] − L_n[g]); uniform prior ⇒ argmin L_n."""
+        idx = (self.log_prior.unsqueeze(0) - self.cum_loss).argmax(dim=-1)
+        return self.beta_grid[idx]
+
+    def realized_regret(self) -> torch.Tensor:
+        """(B,) mixture loss minus the best expert's loss (≤ regret_bound())."""
+        return self.mix_loss - self.cum_loss.min(dim=-1).values
+
+    def regret_bound(self) -> torch.Tensor:
+        """(B,) the per-sequence guarantee ln(1/π₀[best expert]); uniform ⇒ ln G."""
+        best = self.cum_loss.argmin(dim=-1)
+        return -self.log_prior[best]
+
+
+def init_grid_mixture(
+    *,
+    batch_size: int,
+    beta_grid: torch.Tensor,
+    prior_pmf: torch.Tensor | None = None,
+) -> GridMixtureState:
+    """Initialize the grid mixture filter.
+
+    Args:
+        batch_size: number of independent trajectories B.
+        beta_grid: (G,) β values, e.g. from ``make_beta_grid``.
+        prior_pmf: (G,) prior over the grid (e.g. from ``init_prior_pmf``);
+            default uniform. Non-uniform priors loosen the regret bound for
+            expert g to ln(1/π₀[g]) and shift the MAP by the log-prior.
+    """
+    if beta_grid.dim() != 1:
+        raise ValueError(f"beta_grid must be 1D, got shape {tuple(beta_grid.shape)}")
+    G = beta_grid.shape[0]
+    if prior_pmf is None:
+        log_prior = torch.full(
+            (G,), -math.log(G), device=beta_grid.device, dtype=beta_grid.dtype
+        )
+    else:
+        if prior_pmf.shape != (G,):
+            raise ValueError(
+                f"prior_pmf shape {tuple(prior_pmf.shape)} does not match grid ({G},)"
+            )
+        if (prior_pmf <= 0).any():
+            raise ValueError("prior_pmf must be strictly positive on the grid")
+        prior_pmf = prior_pmf.to(device=beta_grid.device, dtype=beta_grid.dtype)
+        log_prior = torch.log(prior_pmf / prior_pmf.sum())
+    zeros = torch.zeros(
+        (batch_size, G), device=beta_grid.device, dtype=beta_grid.dtype
+    )
+    return GridMixtureState(
+        cum_loss=zeros,
+        log_w=log_prior.unsqueeze(0).expand(batch_size, -1).contiguous(),
+        mix_loss=torch.zeros(batch_size, device=beta_grid.device, dtype=beta_grid.dtype),
+        beta_grid=beta_grid,
+        log_prior=log_prior,
+    )
+
+
+def grid_mixture_update_batched(
+    state: GridMixtureState,
+    logits: torch.Tensor,
+    sampled_token_ids: torch.Tensor,
+    *,
+    grid_chunk: int = 32,
+    switch_rate: float = 0.0,
+) -> GridMixtureState:
+    """One expert-advice step: score every expert on raw logits, Bayes-mix.
+
+    Per step, for each grid point β_g:
+
+        log P_g(x_t) = β_g · ℓ_t[x_t] − logsumexp_v(β_g · ℓ_t[v])
+        mix step loss = −logsumexp_g(log w[g] + log P_g(x_t))
+        w ← normalize(w · P_g(x_t));  then Fixed-Share if switch_rate α > 0:
+        w ← (1 − α) · w + α · π₀
+
+    Evidence weighting is deliberately NOT exposed: any weight ≠ 1 destroys the
+    1-mixability of log loss and with it every guarantee documented above.
+
+    Args:
+        state: prior GridMixtureState (B, G).
+        logits: (B, V) RAW pre-decoding logits (no bootstrap rescaling).
+        sampled_token_ids: (B,) int64.
+        grid_chunk: grid points per inner pass (memory O(B·grid_chunk·V)).
+        switch_rate: Fixed-Share α ∈ [0, 1); 0 = pure Bayes (static guarantee).
+
+    Returns:
+        new GridMixtureState.
+    """
+    if not 0.0 <= switch_rate < 1.0:
+        raise ValueError(f"switch_rate must be in [0, 1), got {switch_rate}")
+    B, V = logits.shape
+    G = state.beta_grid.shape[0]
+    if state.cum_loss.shape != (B, G):
+        raise ValueError(
+            f"state.cum_loss shape {tuple(state.cum_loss.shape)} does not match (B={B}, G={G})"
+        )
+    if logits.dtype in (torch.float16, torch.bfloat16):
+        logits = logits.float()
+
+    ell_x = logits.gather(-1, sampled_token_ids.unsqueeze(-1)).squeeze(-1)  # (B,)
+    beta_grid = state.beta_grid
+    log_lik = torch.empty((B, G), device=logits.device, dtype=state.cum_loss.dtype)
+    for start in range(0, G, grid_chunk):
+        stop = min(start + grid_chunk, G)
+        bg = beta_grid[start:stop]                              # (Gc,)
+        scaled = bg.view(1, -1, 1) * logits.unsqueeze(1)        # (B, Gc, V)
+        lse = torch.logsumexp(scaled.to(state.cum_loss.dtype), dim=-1)  # (B, Gc)
+        log_lik[:, start:stop] = bg.unsqueeze(0) * ell_x.unsqueeze(-1) - lse
+
+    step_mix_log_prob = torch.logsumexp(state.log_w + log_lik, dim=-1)  # (B,)
+
+    log_w = state.log_w + log_lik
+    log_w = log_w - torch.logsumexp(log_w, dim=-1, keepdim=True)
+    if switch_rate > 0.0:
+        # Fixed-Share toward the initial prior (Herbster & Warmuth 1998).
+        log_w = torch.logaddexp(
+            log_w + math.log(1.0 - switch_rate),
+            state.log_prior.unsqueeze(0) + math.log(switch_rate),
+        )
+
+    return GridMixtureState(
+        cum_loss=state.cum_loss - log_lik,
+        log_w=log_w,
+        mix_loss=state.mix_loss - step_mix_log_prob,
+        beta_grid=state.beta_grid,
+        log_prior=state.log_prior,
+    )
+
+
+def grid_mixture_level_set(
+    state: GridMixtureState,
+    c: torch.Tensor | float | None = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Per-sequence error bar: bounds in log β of {g : L_n[g] ≤ min L_n + c}.
+
+    L_n(β) is convex in β, so the sub-level set is an interval; its width is a
+    distribution-free, data-dependent uncertainty for the in-hindsight best-fit
+    β. Default threshold c = ln(1/π₀[best expert]) (uniform prior: ln G), the
+    same constant as the regret guarantee.
+
+    "Distribution-free" in both senses: no assumption on the token process, and
+    no log-normal prior / Gaussian-posterior approximation either — with a
+    uniform prior this is a profile-likelihood interval around the grid MLE,
+    and the prior enters only through the default threshold c.
+
+    Returns:
+        (lo, hi): each (B,), bounds in log β. Resolution-limited by the grid:
+        the continuum MLE can sit up to one grid spacing outside.
+    """
+    if c is None:
+        c_t = state.regret_bound()                              # (B,)
+    else:
+        c_t = torch.as_tensor(
+            c, device=state.cum_loss.device, dtype=state.cum_loss.dtype
+        ).expand(state.cum_loss.shape[0])
+    min_loss = state.cum_loss.min(dim=-1, keepdim=True).values  # (B, 1)
+    mask = state.cum_loss <= min_loss + c_t.unsqueeze(-1)       # (B, G)
+    log_grid = torch.log(state.beta_grid).unsqueeze(0)          # (1, G)
+    lo = torch.where(mask, log_grid, torch.inf).min(dim=-1).values
+    hi = torch.where(mask, log_grid, -torch.inf).max(dim=-1).values
+    return lo, hi
 
 
 # ---------------------------------------------------------------------------

@@ -384,6 +384,9 @@ n_cal = ingest(CD / "calibration_baseline" / "macros.tex")
 n_ntf = ingest(CD / "natural_text" / "macros.tex")
 n_sc = ingest(CD / "self_calibration" / "macros.tex")
 n_sv = ingest(CD / "self_calibration" / "survey_macros.tex")
+# NOTE: data/grid_certificate/macros.tex is NOT ingested here -- the paper
+# \input{}s it directly, because its source (results.json) is tracked while
+# this script's other sources are regeneratable-only and absent in worktrees.
 
 # ---------------------------------------------------------------------------
 # write outputs

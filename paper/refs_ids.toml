@@ -41,3 +41,23 @@ claim = "High-dimensional online calibration in polynomial time; calibration-the
 key   = "fishelson2025calibration"
 arxiv = "2505.21460"
 claim = "High-dimensional calibration from swap regret; calibration-theory context for high-dimensional calibration."
+
+[[cite]]
+key   = "vovk1998game"
+doi   = "10.1006/jcss.1997.1556"
+claim = "Aggregating Algorithm and mixability; log loss is 1-mixable, so the Bayes mixture over a finite expert set has per-sequence regret at most ln(1/prior weight) vs every expert."
+
+[[cite]]
+key   = "cesabianchi2006prediction"
+doi   = "10.1017/CBO9780511546921"
+claim = "Prediction-with-expert-advice framework: ch. 3 regret of exponentially weighted forecasters for mixable losses; ch. 9 continuous-prior mixture bounds for log loss over a bounded 1-parameter family."
+
+[[cite]]
+key   = "herbster1998tracking"
+doi   = "10.1023/A:1007424614876"
+claim = "Fixed-Share: sharing a fraction of posterior weight to the prior each step tracks the best m-segment expert sequence with regret ~ m ln(Kn/m); our switch_rate knob is the share-to-initial-prior variant."
+
+[[cite]]
+key   = "foster2018logistic"
+arxiv = "1803.09349"
+claim = "Proper online logistic-type predictors face an exp-concavity obstruction (regret exponential in the predictor norm) while improper mixture forecasters avoid it; the reason the certificate attaches to the grid mixture, not the Laplace point filter."
