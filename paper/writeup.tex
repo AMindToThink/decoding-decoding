@@ -79,9 +79,10 @@ and with a per-sequence guarantee.
 This sits at the intersection of post-hoc calibration
 \citep{guo2017calibration,liu2024temperature} and the
 algorithms-with-predictions viewpoint \citep{mitzenmacher2020algorithms} of the
-course, in which a possibly-unreliable prediction augments a downstream decision;
-what we then most want is a \emph{worst-case, per-sequence} guarantee that holds
-even when the stream is misspecified, which Section~\ref{sec:cert} delivers.
+course, in which a possibly-unreliable prediction augments a downstream decision.
+A \emph{worst-case, per-sequence} guarantee that holds even when the stream is
+misspecified is a natural thing to ask for in that setting, and
+Section~\ref{sec:cert} provides one.
 
 \paragraph{The model tracks its decoder.}
 We constrain the decoder while the model generates, then ask whether the model,
@@ -265,13 +266,17 @@ Qwen-2.5-3B, $32$ prompts, $1000$ tokens.}
 \section{Generating better, and limitations}\label{sec:gen}
 % =====================================================================
 \paragraph{Can we use the read-out to \emph{generate} better? Not yet.}
-The tempting move is to feed $\hat\beta_t$ back into the sampler to ``correct''
-the temperature as it generates. It self-neutralizes: correcting toward
-$\hat\beta$ drives the effective decoding temperature back to
-$\beta_{\mathrm{dec}}\to 1$, quietly cancelling the very signal it reads off. We
-confirmed this across exact-grid filters, so it is not an approximation artifact
-(Appendix~\ref{app:controls}). Turning the read-out into better generation is the
-honest open problem.
+The original aim was more ambitious: match the sampler's per-token temperature to
+a \emph{sequence-level} target rather than a per-token one. This ran into the
+\emph{label bias} problem \citep{andor2016globally}, since a locally normalized
+per-token temperature cannot reproduce a globally normalized sequence-level
+distribution, and our attempts to address or circumvent it did not pan out. Even
+the modest closed-loop version, feeding $\hat\beta_t$ back into the sampler as it
+generates, self-neutralizes: correcting toward $\hat\beta$ drives the effective
+decoding temperature back to $\beta_{\mathrm{dec}}\to 1$, cancelling the very
+signal it reads off. We confirmed this across exact-grid filters, so it is not an
+approximation artifact (Appendix~\ref{app:controls}). Turning the read-out into
+better generation is the honest open problem.
 
 \paragraph{Limitations.}
 These are preliminary steps, on a single model and tokenizer; the certificate

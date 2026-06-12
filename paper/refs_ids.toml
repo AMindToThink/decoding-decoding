@@ -71,3 +71,8 @@ claim = "Stealing the Decoding Algorithms of Language Models (CCS'23): recovers 
 key   = "mikhaylovskiy2026temperature"
 arxiv = "2601.02320"
 claim = "Independently derives the same training-free per-sequence temperature MLE (observed logit sum = expected logit sum under softmax(beta*logits)), but offline (batch root-finder) and with no certificate; near-concurrent work (Jan 2026) whose 'ill-posed, awaiting regularization' gap the grid certificate addresses."
+
+[[cite]]
+key   = "andor2016globally"
+arxiv = "1603.06042"
+claim = "Globally Normalized Transition-Based Neural Networks (ACL'16): the label bias problem implies globally normalized models are strictly more expressive than locally normalized ones; cited for why a locally normalized per-token temperature cannot reproduce a globally normalized sequence-level tempered distribution."
