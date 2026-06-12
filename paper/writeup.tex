@@ -1,0 +1,279 @@
+% Three-page project write-up, "Reliable ML with Unreliable Black Boxes".
+% Core = the bucket (grid-mixture) streaming certificate and its provable
+% guarantees (Lemma 1 + proof), plus three preliminary findings from the talk.
+% Everything else is pushed to the appendices. Build: latexmk -pdf writeup.tex
+%
+% Numbers are NEVER hand-typed: every inline scalar resolves through a
+% script-generated macro (\input paper_macros.tex / grid_certificate macros).
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{amsthm}
+\newtheorem{lemma}{Lemma}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{parskip}
+\usepackage[round]{natbib}
+\usepackage[hidelinks]{hyperref}
+
+\graphicspath{%
+  {../results/figures/}%
+  {../results/counter_decode/self_calibration/}%
+}
+\newcommand{\tabdir}{../results/tables}
+\input{../results/tables/paper_macros.tex}
+\input{../data/grid_certificate/macros.tex}
+
+\title{Reading the Decoder: A Distribution-Free Streaming Certificate\\
+for an LLM's Effective Decoding Temperature}
+\author{Matthew Khoriaty}
+\date{Project write-up, \emph{Reliable ML with Unreliable Black Boxes}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+An autoregressive language model is trained to \emph{predict} text, so when it
+\emph{generates}, it has an incentive to model the decoder that turns its logits
+into tokens (a temperature, a top-$k$ cutoff, a banned-token list). This
+write-up reports preliminary steps toward reading that decoder off the model's
+own logits, training-free. Our central result is a \textbf{partial proof}: a
+streaming estimator built from a grid (``bucket'') of fixed temperature experts
+is exactly Vovk's Aggregating Algorithm for log loss, and therefore carries two
+\emph{per-sequence, distribution-free} guarantees on arbitrary token streams ---
+a forecast-regret bound of $\ln G$ against the best bucket in hindsight, and a
+convex level-set error bar around the grid MLE that needs no distributional
+assumptions (Lemma~\ref{lem:certificate}). We then report three preliminary
+findings, framed as questions: \textbf{(1)}~the model tracks a token blacklist
+and a top-$k$ cutoff from its own constrained text; \textbf{(2)}~a streaming
+read-out of $\hat\beta_t$ predicts known-temperature self-text near-optimally but
+finds little to recalibrate on natural text, where Qwen-2.5-3B is
+temperature-robust; and \textbf{(3)}~closed-loop correction self-neutralizes, so
+using the read-out to \emph{generate} better is still open. All numbers are
+script-generated and cited by name.
+\end{abstract}
+
+% =====================================================================
+\section{The research question}
+% =====================================================================
+At each step an autoregressive language model emits a distribution over next
+tokens; \emph{decoding} chooses how to sample from it. Because models are trained
+to predict text rather than to generate it, a model that reads back its own
+generated prefix has an incentive to infer the decoder that produced it and
+adjust its predictions accordingly \citep{basu2021mirostat}. The question this
+project addresses is whether that decoder --- concretely, an effective
+inverse-temperature $\beta = 1/T$ --- can be \emph{read off the model's own
+logits online, training-free, and with guarantees}, and whether the read-out is
+useful for prediction or generation. This sits at the intersection of post-hoc
+calibration \citep{guo2017calibration,liu2024temperature} and the
+algorithms-with-predictions viewpoint \citep{mitzenmacher2020algorithms} of the
+course, in which a possibly-unreliable prediction augments a downstream decision;
+what we then most want is a \emph{worst-case, per-sequence} guarantee that holds
+even when the stream is misspecified. Section~\ref{sec:cert} delivers one;
+Section~\ref{sec:findings} reports three preliminary experiments, with supporting
+machinery (a fast point filter, a corrector, control experiments) in the
+appendices.
+
+% =====================================================================
+\section{The bucket streaming certificate}\label{sec:cert}
+% =====================================================================
+Fix a grid (a set of ``buckets'') of inverse-temperatures
+$\beta_1 < \dots < \beta_G$, log-spaced over a bounded range. Treat each
+$\beta_g$ as a fixed \emph{expert} that forecasts the next token with probability
+$P_g(x_t) = \mathrm{softmax}(\beta_g\,\ell_t)[x_t]$ on the model's \emph{raw}
+logits $\ell_t \in \mathbb{R}^V$ (no rescaling --- fixed experts are what make
+the guarantees hold). Let
+\[
+  L_n(\beta) = \sum_{t\le n} \big[\mathrm{lse}(\beta\ell_t) - \beta\,\ell_t[x_t]\big],
+  \qquad \mathrm{lse}(\cdot) = \log\textstyle\sum_v \exp(\cdot),
+\]
+be the cumulative log loss of bucket $\beta$, let $\pi_0$ be a prior on the grid,
+and let the streaming forecaster predict $x_t$ with probability
+$\sum_g w_g(t)\,P_g(x_t)$, where $w_g(t) \propto \pi_0[g]\,e^{-L_{t-1}(\beta_g)}$
+is the Bayes posterior over buckets. This is precisely Vovk's Aggregating
+Algorithm for log loss \citep{vovk1998game,cesabianchi2006prediction}, and the
+following holds for \emph{every} logit/token sequence --- with no assumption that
+tokens were sampled from any $P_\beta$, or from anything at all.
+
+\begin{lemma}[per-sequence certificate]\label{lem:certificate}
+For any logit sequence $\ell_{1:n}$ and any token sequence $x_{1:n}$:
+(i)~the forecaster's cumulative log loss is
+$-\ln \sum_g \pi_0[g]\, e^{-L_n(\beta_g)} \le L_n(\beta_g) + \ln(1/\pi_0[g])$
+for every $g$; with uniform $\pi_0$ the regret against the best bucket in
+hindsight is at most $\ln G$.
+(ii)~With uniform $\pi_0$ the posterior mode equals $\arg\min_g L_n(\beta_g)$,
+the best-fit (\emph{effective}) inverse temperature on the grid, exactly.
+(iii)~$L_n$ is convex with $L_n''(\beta) = \sum_t \mathrm{Var}_{q_{\beta,t}}[\ell_t]$,
+$q_{\beta,t} = \mathrm{softmax}(\beta\ell_t)$, so for any $c>0$ the sub-level set
+$\{\beta : L_n(\beta) \le \min L_n + c\}$ is an interval containing the sequence
+MLE; its endpoints, read off the stored grid loss profile, are a data-dependent
+error bar that needs no distributional assumptions.
+\end{lemma}
+
+\begin{proof}
+(i)~The forecaster's per-step log probabilities telescope:
+\[
+  \textstyle\sum_t \ln \sum_g w_g(t) P_g(x_t)
+  = \ln \sum_g \pi_0[g]\, e^{-L_n(\beta_g)}
+  \ge \ln\big(\pi_0[g]\, e^{-L_n(\beta_g)}\big)\ \text{for each } g.
+\]
+(ii)~Immediate from $w_g(n) \propto e^{-L_n(\beta_g)}$.
+(iii)~Each summand of $L_n$ is an $\mathrm{lse}$ of an affine function of $\beta$
+minus an affine function, hence convex; differentiate twice.
+\end{proof}
+
+``Distribution-free'' here does double duty. Over the data process, the lemma
+assumes nothing about how $x_{1:n}$ was produced. Over the estimator's own
+assumptions, with uniform $\pi_0$ the mode in (ii) \emph{is} the grid MLE and the
+bar in (iii) is an exact profile-likelihood interval (not a Gaussian
+approximation); the prior survives only as the constant $c=\ln G$. We report the
+mode, not the posterior mean: by (ii) it equals the best-fit bucket with zero
+slack, whereas the mean of the (unimodal but skewed --- $e^{-L_n}$ is log-concave
+by (iii)) posterior over a log-spaced grid is mildly biased.
+
+\paragraph{Three honest caveats.}
+First, the certificate is relative to the in-hindsight best-fit $\beta$, not the
+dial a counterparty actually set; under a misspecified decoder (a top-$k$ cutoff,
+a blacklist) no single ``true'' $\beta$ describes the stream, and the best-fit
+value is exactly what ``effective temperature'' should mean there. The bar then
+certifies \emph{fit to the observed stream}, and a narrow bar means $\beta$ is
+\emph{identifiable}, not that any temperature fits well. Second, the interval in
+(iii) widens exactly when peaked logits make $\beta$ unidentifiable
+($\mathrm{Var}_{q}[\ell_t]\to 0$), so forecasting regret and estimation precision
+degrade in opposite directions. Third, the guarantee attaches to the mixture, not
+a point estimator (proper online predictors face an exp-concavity obstruction
+that improper mixtures avoid \citep{foster2018logistic}), so transferring it to
+the fast filter (Appendix~\ref{app:laplace}) is an empirical, pre-registered
+claim.
+
+\paragraph{Pre-registered validation.}
+We committed four hypotheses, with sample sizes and thresholds, \emph{before}
+generating any data (\texttt{paper/grid\_certificate\_prereg.md}); the bar uses
+$c=\ln G$ on a $121$-bucket grid spanning $\log\beta\in[-3,3]$.
+Table~\ref{tab:grid_certificate} reports the outcome. The bar covered the
+continuum MLE on every well-specified synthetic stream (\gridCertCoverage); on
+real Qwen-2.5-3B streams at $\beta{=}1$ the median width was
+\gridCertMedianWidthBtOne{} in $\log\beta$ (the grid-resolution floor --- the bar
+is far from vacuous where logits carry temperature information) and widened on
+peaked-logit streams exactly as (iii) predicts. The transfer check to the fast
+filter passed (\gridCertFaithfulAgree{} of estimates inside the bar), while the
+original $\beta{=}1$-linearized filter landed inside on only
+\gridCertOriginalAgree{} --- so the certificate extends to the corrected filter's
+outputs, not the original's.
+
+\begin{table}[t]
+\centering
+\input{\tabdir/tab_grid_certificate.tex}
+\caption{Pre-registered evaluation of the certificate (hypotheses, sample sizes,
+and thresholds committed before any data were generated). Real streams are
+Qwen-2.5-3B, $32$ prompts, $1000$ tokens.}
+\label{tab:grid_certificate}
+\end{table}
+
+% =====================================================================
+\section{Three preliminary findings}\label{sec:findings}
+% =====================================================================
+We frame the empirical work as three questions. All use Qwen-2.5-3B (base, fp16)
+and only the model's own logits; no training.
+
+\paragraph{(1) Does the model model its decoder? Yes.}
+We constrain the decoder while the model generates, then ask whether the model,
+reading back its own constrained text, has inferred the constraint.
+\textbf{Blacklist:} ban a token during generation;
+the model lowers its predicted probability on that token across the sequence
+($\Delta p_{\text{late--early}} = \blRankOneDeltaP$ for the top token) and below
+an unbanned control ($\blRankOneTvc$, 95\% CI
+$[\blRankOneTvcLo,\blRankOneTvcHi]$), with an early-position contrast
+$\approx 0$ as a sanity check. \textbf{Top-$k$:} truncating to the top $k$
+produces no significant cliff at $k$ itself; instead probability concentrates on
+the head, the more so the tighter the cutoff. So the model does track its
+decoder, though the top-$k$ signal is broad sharpening rather than a $k$-specific
+edge --- a conservative reading the controls do not let us strengthen to ``infers
+the exact constraint.''
+
+\paragraph{(2) Can we use that to predict better? Yes on temperatured text, no in
+the wild.} A streaming filter reads $\hat\beta_t$ off the prefix one token at a
+time (Appendix~\ref{app:laplace}). On Qwen self-text generated at a \emph{known}
+temperature ($\scNseq$ sequences per $T$), $\hat\beta_t$ settles on the true
+$\log(1/T)$ from the prefix alone (bias $\scFaithBiasZeroSeven$ at $T{=}0.7$), and
+using it as a per-token temperature beats the default $\beta{=}1$ model by
+$\scNllGainZeroSeven$ nats at $T{=}0.7$ (up to $\scNllGainTwo$ at $T{=}2$), within
+$\scOracleGapTwo$ nats of an oracle that \emph{knows} $1/T$. But does
+\emph{natural} text carry a recoverable
+temperature? Fitting the best global temperature per text type over
+$\scSurvNDatasets$ types from in-distribution to far-OOD
+(appendix Table~\ref{tab:survey}), Qwen is temperature-robust everywhere: optimal
+$T\in[\scSurvOptTRecaman,\scSurvMaxOptT]$ and the best temperature buys
+$\le\scSurvGainRecaman$ nats on any real type ($\scSurvGainShuffledWikitext$ only
+on shuffled gibberish). So the read-out is real and usable on temperatured text,
+but in the wild there is essentially nothing to recalibrate.
+
+\paragraph{(3) Can we use it to generate better? Not yet.}
+The tempting move is to feed $\hat\beta_t$ back into the sampler to ``correct''
+the temperature as it generates. It self-neutralizes: correcting toward
+$\hat\beta$ drives the effective decoding temperature back to
+$\beta_{\mathrm{dec}}\to 1$, quietly cancelling the very signal it reads off. We
+confirmed this across exact-grid filters, so it is not an approximation artifact.
+Turning the read-out into better generation is the honest open problem.
+
+% =====================================================================
+\section{Limitations and next steps}
+% =====================================================================
+These are preliminary steps, on a single model and tokenizer; the certificate
+certifies the effective $\beta$ of the \emph{observed} stream, never a
+counterparty's dial. The natural next step, for which it is the right tool, is
+misspecification: the \emph{effective} temperature and goodness-of-fit that
+top-$k$ and blacklist decoders register, where no single temperature reproduces
+the stream and the best-fit bucket is a projection (synthetic pilot:
+\texttt{scripts/e1\_synthetic\_pilot.py}).
+
+\appendix
+% =====================================================================
+\section{The fast point-estimate filter}\label{app:laplace}
+% =====================================================================
+The bucket certificate is a mixture forecaster; for a single-number read-out we
+use a companion streaming \emph{Laplace} filter --- a prior-regularized one-step
+online MLE on $\eta=\log\beta$. With a log-normal prior (mean $1$, scale
+$\sigma_0$) and a per-token Newton/Fisher-scoring update of the categorical
+likelihood under $q=\mathrm{softmax}(\ell_t)$, the update uses
+$\text{score}_t = \ell_t[x_t]-\mathbb{E}_q[\ell_t]$ and
+$J_t = \sigma_0^{-2}+\sum_{\tau\le t}\mathrm{Var}_q[\ell_\tau]$, with $q$
+evaluated at $\beta=1$. This estimator is fast and is what produces the
+$\hat\beta_t$ used in finding~(2); it carries \emph{no} per-sequence guarantee
+(its experts are not fixed), which is exactly why the certificate of
+Section~\ref{sec:cert} exists and why we validate the filter \emph{against} it
+(Table~\ref{tab:grid_certificate}). Implementation and unit tests (shift
+invariance, batched\,$=$\,serial, recovery under matched-prior synthetic data)
+are in \texttt{src/decoding\_decoding/counter\_decode.py}.
+
+% =====================================================================
+\section{Corrector and supporting control experiments}
+% =====================================================================
+A corrector $\beta^{\mathrm{dec}}_t = \beta^{\mathrm{target}}/\hat\beta_t^{\,p}$
+divides a user's target by the estimate. An empirical sweep shows it pins the
+effective temperature in the ``boredom'' regime ($\beta^{\mathrm{target}}>1$) but
+overshoots in the ``confusion'' regime ($\beta^{\mathrm{target}}<1$), where
+low-$\beta$ self-generation degrades into incoherent text within $\sim$20 tokens
+(a garbage-in/garbage-out confound that limits what the confusion-regime numbers
+can claim). Two further controls sharpen the picture and are reported in full in
+the longer draft (\texttt{paper/decoding\_paper.tex}): a sampler-switch
+experiment indicating the belief is not a fast per-token entropy read-out (though
+entropy and rank statistics are closely related, so this is a null on one
+specific mechanism, not a positive identification), and a closed-loop-vs-%
+invariance comparison whose only firmly supported conclusion is ``do not correct
+at $\beta^{\mathrm{target}}=1$, because Qwen is already calibrated there.''
+
+\begin{table}[h]
+\centering\small
+\input{\tabdir/self_calibration_survey.tex}
+\caption{Finding (2), natural text (full table): the best global temperature buys
+almost nothing over $\beta{=}1$ across $\scSurvNDatasets$ text types.
+${}^{**}$ marks a gain significant at the stated level; magnitudes are negligible
+on all real types.}
+\label{tab:survey}
+\end{table}
+
+\bibliographystyle{plainnat}
+\bibliography{refs}
+
+\end{document}
