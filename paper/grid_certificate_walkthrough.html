@@ -319,11 +319,11 @@ I<sub>c</sub> = { <em>&beta;</em> : L<sub>n</sub>(<em>&beta;</em>) &le; min L<su
 <p>All experiments were pre-registered (hypotheses, sample sizes, statistical tests, and decision thresholds committed in <code>paper/grid_certificate_prereg.md</code> <em>before</em> any data were generated).</p>
 
 <table>
-<tr><th>Hypothesis</th><th>What it checks</th><th>Status at time of writing</th></tr>
+<tr><th>Hypothesis</th><th>What it checks</th><th>Outcome (all four pre-registered tests complete)</th></tr>
 <tr><td><strong>H1</strong> (coverage)</td><td>On synthetic streams genuinely sampled at <em>&beta;</em>* = 1, the interval contains the true best-fit temperature</td><td><strong>200 / 200 streams covered</strong></td></tr>
-<tr><td><strong>H2</strong> (non-vacuousness)</td><td>On real Qwen2.5-3B text at temperature 1 (1000 tokens), the bar is usefully narrow (median width &lt; 0.2 in log &beta;)</td><td>Model streams generating; pending</td></tr>
+<tr><td><strong>H2</strong> (non-vacuousness)</td><td>On real Qwen2.5-3B text at temperature 1 (1000 tokens), the bar is usefully narrow (median width &lt; 0.2 in log &beta;)</td><td><strong>Holds</strong>: median width 0.05 in log &beta; (the grid-resolution floor); all 32 streams below 0.2</td></tr>
 <tr><td><strong>H3</strong> (honest degradation)</td><td>The bar is wider on peaked-logit streams than natural ones</td><td><strong>Confirmed direction</strong>: median width 0.45 (peaked) vs 0.25 (natural)</td></tr>
-<tr><td><strong>H4</strong> (transfer to Laplace)</td><td>The Laplace point estimates fall inside the certified bar on real streams</td><td>Model streams generating; pending</td></tr>
+<tr><td><strong>H4</strong> (transfer to Laplace)</td><td>The Laplace point estimates fall inside the certified bar on real streams</td><td><strong>Passes</strong>: 88 / 96 faithful-Laplace estimates inside the bar (&ge; 0.90 gate). Exploratory: the <em>original</em> &beta;=1-linearized filter lands inside on only 10/96 &mdash; its bias is real, and the certificate transfers to the faithful variant only</td></tr>
 </table>
 
 <p>The supporting math is exercised directly by unit tests (<code>tests/test_grid_mixture.py</code>): the telescoping identity holds to 10<sup>&minus;8</sup>, the MAP&nbsp;=&nbsp;argmin identity holds exactly, and &mdash; the test that matters most &mdash; on a sequence where each token is <em>chosen adversarially to be the mixture's least-predicted word</em>, the realized regret still lands under ln G, as the theorem demands.</p>
