@@ -57,13 +57,18 @@ import torch.nn.functional as F
 
 from decoding_decoding.counter_decode import (
     DiscreteGridState,
+    GridMixtureState,
     LaplaceState,
     discrete_grid_update_batched,
     estimate_beta_rank_gap,
     estimate_beta_renyi_infty,
+    grid_mixture_level_set,
+    grid_mixture_update_batched,
     init_discrete_grid_state,
+    init_grid_mixture,
     init_laplace,
     laplace_update,
+    make_beta_grid,
     rank_gaps,
     renyi_infty_from_logits,
     sample_under_beta,
@@ -87,6 +92,12 @@ TOP_LOGPROBS = 200
 SEED_BASE = 42
 COUNTER_SEED_OFFSET = 300_000
 DEFAULT_SPARSE_POSITIONS: tuple[int, ...] = (8, 16, 32, 64, 128, 199)
+
+# Certificate backend (prior_kind="grid_mixture") default grid — matches
+# scripts/grid_certificate_experiments.py (GRID_LOG_LO/HI/POINTS) so the
+# in-the-loop filter shares the certificate's grid semantics. Overridable per
+# run via prior_kwargs {log_lo, log_hi, n_points}.
+GRID_MIXTURE_LOG_LO, GRID_MIXTURE_LOG_HI, GRID_MIXTURE_POINTS = -3.0, 3.0, 121
 
 
 # --------------------------------------------------------------------------
@@ -205,16 +216,28 @@ def _topn_extract(logits: torch.Tensor, n: int) -> tuple[np.ndarray, np.ndarray]
 
 @dataclass
 class GenerationResult:
-    """Per-trajectory data for a batch of `B` trajectories run in parallel."""
+    """Per-trajectory data for a batch of `B` trajectories run in parallel.
+
+    NOTE — diagnostic-slot semantics depend on ``prior_kind`` (recorded in each
+    trace's params, so consumers can tell which applies):
+      * Laplace / discrete-grid backends: ``J_pre`` is a precision (1/var on
+        log β), ``score`` is a log-β-change score, ``fisher`` a precision change.
+      * ``grid_mixture`` (certificate) backend: there is NO precision analog, so
+        the slots are repurposed — ``J_pre`` (and ``J_post_final``) carry the
+        level-set WIDTH in log β (uncertainty, not precision), ``score`` carries
+        the realized regret (mixture loss − best-expert loss), and ``fisher``
+        carries the regret bound ln(1/π₀[best]) (uniform prior ⇒ ln G). β̂
+        (``beta_hat_pre``) is the grid MAP in every backend.
+    """
 
     sampled_token_ids: np.ndarray   # (B, T) int64
     top_token_ids: np.ndarray       # (B, T, top_n) int32
     top_logprobs: np.ndarray        # (B, T, top_n) float32
     beta_hat_pre: np.ndarray        # (B, T) float32  — β̂ at start of step t
     beta_dec: np.ndarray            # (B, T) float32
-    J_pre: np.ndarray               # (B, T) float32
-    score: np.ndarray               # (B, T) float32
-    fisher: np.ndarray              # (B, T) float32
+    J_pre: np.ndarray               # (B, T) float32 — precision; grid_mixture: level-set width
+    score: np.ndarray               # (B, T) float32 — grid_mixture: realized regret
+    fisher: np.ndarray              # (B, T) float32 — grid_mixture: regret bound (ln G)
     max_p_phi: np.ndarray           # (B, T) float32
     entropy_phi: np.ndarray         # (B, T) float32
     max_p_sample: np.ndarray        # (B, T) float32
@@ -246,6 +269,7 @@ def _generate_batch(
     evidence_weight: float = 1.0,
     memory_decay: float = 1.0,
     correction_exponent: float = 1.0,
+    switch_rate: float = 0.0,
 ) -> GenerationResult:
     """Run `len(prompts)` trajectories in parallel through `max_tokens` steps.
 
@@ -275,10 +299,14 @@ def _generate_batch(
     P = input_ids.shape[1]
     V = model.config.vocab_size
 
-    # Initialize per-trajectory β estimator state. Three backends:
+    # Initialize per-trajectory β estimator state. Four backends:
     #   - "lognormal_laplace": original streaming Laplace on log β (vectorized).
     #   - other priors via discrete grid: "lognormal", "exponential", "gamma",
     #     "invgamma", "halfcauchy_logβ", "cauchy_logβ", "uniform_logβ".
+    #   - "grid_mixture": guarantee-bearing certificate filter (expert-advice
+    #     grid mixture / Vovk AA). β̂ is the grid MAP; the only knob is
+    #     switch_rate; evidence_weight/memory_decay are forbidden (they break
+    #     1-mixability). See GridMixtureState in counter_decode.py.
     #   - shape estimators "rank_gap" / "renyi_infty": non-bootstrap, read β̂
     #     from ℓ_t shape relative to a t=0 reference. No filter state, just a
     #     stored reference per trajectory.
@@ -286,6 +314,7 @@ def _generate_batch(
     # (the design choice is per-condition, not per-trajectory).
     laplace_state: LaplaceState | None = None
     grid_state: DiscreteGridState | None = None
+    mixture_state: GridMixtureState | None = None
     laplace_prior_eta: float = 0.0
     laplace_prior_J: float = 0.0
     grid_prior_pmf: torch.Tensor | None = None
@@ -310,6 +339,38 @@ def _generate_batch(
         sigma_0_val = float(sigma_0_per_traj[0].item())
         laplace_prior_eta = -0.5 * sigma_0_val ** 2
         laplace_prior_J = 1.0 / sigma_0_val ** 2
+    elif prior_kind == "grid_mixture":
+        # Certificate backend. NOT a copy of the discrete-grid branch: experts
+        # are FIXED forecasters on RAW logits, β̂ is the grid MAP, and the prior
+        # is uniform (clean ln G regret bound). evidence_weight and memory_decay
+        # are forbidden — they destroy the 1-mixability the guarantees rest on
+        # (grid_mixture_update_batched would raise on evidence_weight anyway).
+        # The only knob is switch_rate (Fixed-Share tracking). sigma_0 is unused.
+        if evidence_weight != 1.0:
+            raise ValueError(
+                "prior_kind='grid_mixture' forbids evidence_weight != 1 "
+                "(it breaks the 1-mixability of log loss and voids the certificate)"
+            )
+        if memory_decay != 1.0:
+            raise ValueError(
+                "prior_kind='grid_mixture' forbids memory_decay != 1 "
+                "(no analog; use switch_rate for tracking instead)"
+            )
+        gm_pkw = dict(pkw)
+        beta_grid = make_beta_grid(
+            log_lo=gm_pkw.pop("log_lo", GRID_MIXTURE_LOG_LO),
+            log_hi=gm_pkw.pop("log_hi", GRID_MIXTURE_LOG_HI),
+            n_points=gm_pkw.pop("n_points", GRID_MIXTURE_POINTS),
+            device=device,
+            dtype=torch.float32,
+        )
+        if gm_pkw:
+            raise ValueError(
+                f"prior_kind='grid_mixture' got unexpected prior_kwargs "
+                f"{sorted(gm_pkw)}; only log_lo/log_hi/n_points are accepted "
+                "(the certificate uses a uniform prior by construction)"
+            )
+        mixture_state = init_grid_mixture(batch_size=B, beta_grid=beta_grid)
     else:
         sigma_0_val = float(sigma_0_per_traj[0].item())
         if not (sigma_0_per_traj == sigma_0_per_traj[0]).all():
@@ -406,6 +467,15 @@ def _generate_batch(
             # No "J" in the discrete filter; record posterior precision on log β as 1/std².
             std_lb = grid_state.posterior_std_log_beta()
             J_now = 1.0 / std_lb.clamp_min(1e-3) ** 2
+        elif mixture_state is not None:
+            # Certificate backend: β̂ is the grid MAP. There is NO precision
+            # analog J; the honest per-step uncertainty is the level-set WIDTH
+            # in log β. We carry that width in the J_pre slot (see the
+            # GenerationResult note — for grid_mixture, J_pre is a width, NOT a
+            # precision). Read from the pre-update state.
+            beta_hat_now = mixture_state.beta_map()
+            lo_t, hi_t = grid_mixture_level_set(mixture_state)
+            J_now = hi_t - lo_t                       # (B,) width in log β
         elif prior_kind == "rank_gap":
             assert rank_gap_reference is not None
             beta_hat_now = estimate_beta_rank_gap(logits_t, rank_gap_reference)
@@ -472,6 +542,18 @@ def _generate_batch(
             score_t = torch.log(new_bh) - torch.log(beta_hat_now)
             new_J = 1.0 / grid_state.posterior_std_log_beta().clamp_min(1e-3) ** 2
             fisher_t = (new_J - J_now).clamp_min(0.0)
+        elif mixture_state is not None:
+            # Certificate update: score experts on RAW logits, Bayes-mix. The
+            # only knob is switch_rate (Fixed-Share). The score/fisher diagnostic
+            # slots are repurposed (see GenerationResult note):
+            #   score  ← realized regret  = mixture loss − best-expert loss
+            #   fisher ← regret bound     = ln(1/π₀[best]) (uniform ⇒ ln G)
+            # so a consumer can verify realized ≤ bound straight from the trace.
+            mixture_state = grid_mixture_update_batched(
+                mixture_state, logits_t, x_t, switch_rate=switch_rate
+            )
+            score_t = mixture_state.realized_regret()
+            fisher_t = mixture_state.regret_bound()
         else:
             # Shape estimators: no filter update. β̂_{t+1} will be computed from
             # the next step's ℓ_{t+1} and the same fixed reference.
@@ -543,6 +625,13 @@ def _generate_batch(
             .numpy()
             .astype(np.float32)
         )
+    elif mixture_state is not None:
+        # Certificate filter: η̂_final = log(grid MAP); J_final carries the final
+        # level-set WIDTH in log β (uncertainty, not a precision — same override
+        # as the per-step J_pre slot).
+        eta_final = torch.log(mixture_state.beta_map()).detach().cpu().numpy().astype(np.float32)
+        lo_f, hi_f = grid_mixture_level_set(mixture_state)
+        J_final = (hi_f - lo_f).detach().cpu().numpy().astype(np.float32)
     else:
         # Shape estimator: no posterior. Take the last-step β̂ as the "final"
         # estimate, and zero out the precision (J undefined for shape readout).
@@ -657,6 +746,7 @@ def run_counter_decode_experiment(
     evidence_weight: float = 1.0,
     memory_decay: float = 1.0,
     correction_exponent: float = 1.0,
+    switch_rate: float = 0.0,
 ) -> None:
     """Generate counter-decoding trajectories for the F0 sweep.
 
@@ -742,6 +832,7 @@ def run_counter_decode_experiment(
             evidence_weight=evidence_weight,
             memory_decay=memory_decay,
             correction_exponent=correction_exponent,
+            switch_rate=switch_rate,
         )
 
         for b, spec in enumerate(batch_specs):
@@ -765,6 +856,7 @@ def run_counter_decode_experiment(
                 "evidence_weight": float(evidence_weight),
                 "memory_decay": float(memory_decay),
                 "correction_exponent": float(correction_exponent),
+                "switch_rate": float(switch_rate),
             }
             new_rows.append(
                 {
@@ -805,5 +897,6 @@ def run_counter_decode_experiment(
         evidence_weight=float(evidence_weight),
         memory_decay=float(memory_decay),
         correction_exponent=float(correction_exponent),
+        switch_rate=float(switch_rate),
     )
     print(f"[counter-decode] wrote {len(new_rows)} trajectories to {out_dir}")
