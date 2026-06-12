@@ -4,9 +4,9 @@
 %   (2) a streaming estimator reads the effective temperature off the prefix  ->
 %   (3) ... a "bucket" (grid-mixture) version of that estimator carries
 %       per-sequence, distribution-free guarantees (Lemma 1 + proof).
-% Section 3 (the certificate) is the centerpiece the reader finds most
-% interesting and is kept intact; Beats 1-2 are trimmed and the standalone
-% filter appendix is folded into a footnote to make room for the figures.
+% Section 3 (the certificate) is the centerpiece and is kept intact; the earlier
+% sections are trimmed and the standalone filter appendix is folded into a
+% footnote to make room for the figures.
 % Build: latexmk -pdf writeup.tex
 %
 % Numbers are NEVER hand-typed: every inline scalar resolves through a
@@ -39,23 +39,23 @@
 
 \begin{abstract}
 An autoregressive language model is trained to \emph{predict} text, so when it
-\emph{generates} it has an incentive to model its own \emph{decoder} --- the
+\emph{generates} it has an incentive to model its own \emph{decoder}: the
 temperature, top-$k$ cutoff, or banned-token list that turns its logits into
 tokens. Does the model know that decoder, and can we read it off the model's own
-logits, training-free? We report preliminary steps, in three beats.
+logits, training-free? We report preliminary steps, in three parts.
 \textbf{(1)}~The model tracks its decoder: ban a token or impose a top-$k$ cutoff
-while it generates, and the model --- reading back its own constrained text ---
-lowers the right probabilities. \textbf{(2)}~A streaming estimator reads an
-effective inverse-temperature $\beta = 1/T$ off the prefix one token at a time;
-on known-temperature self-text it recovers the true $1/T$ and predicts
+while it generates, and the model, reading back its own constrained text, lowers
+the right probabilities. \textbf{(2)}~A streaming estimator reads an effective
+inverse-temperature $\beta = 1/T$ off the prefix one token at a time; on
+known-temperature self-text it recovers the true $1/T$ and predicts
 near-optimally, though natural text carries little to recalibrate (Qwen-2.5-3B is
-temperature-robust). \textbf{(3)}~Our central result is a \textbf{partial proof}:
-building that estimator as a grid (``bucket'') of fixed-temperature experts makes
-it exactly Vovk's Aggregating Algorithm for log loss, and it therefore carries
-two \emph{per-sequence, distribution-free} guarantees on arbitrary streams --- a
-forecast-regret bound of $\ln G$ against the best bucket, and a convex level-set
-error bar around the grid MLE (Lemma~\ref{lem:certificate}) --- while certifying
-the Beat-2 read-out. Turning the read-out into better \emph{generation}
+temperature-robust). \textbf{(3)}~We provide two \emph{per-sequence,
+distribution-free} guarantees by building that estimator as a grid (``bucket'') of
+fixed-temperature experts, which makes it exactly Vovk's Aggregating Algorithm for
+log loss \citep{vovk1998game}. They hold on arbitrary streams: a forecast-regret
+bound of $\ln G$ against the best bucket, and a convex level-set error bar around
+the grid MLE (Lemma~\ref{lem:certificate}); the same construction certifies the
+streaming read-out of~(2). Turning the read-out into better \emph{generation}
 self-neutralizes and is left open. All numbers are script-generated and cited by
 name.
 \end{abstract}
@@ -68,14 +68,14 @@ tokens; \emph{decoding} chooses how to sample from it.
 Because models are trained to predict text rather than to generate it, a model
 that reads back its own generated prefix has an incentive to infer the decoder
 that produced it and adjust its predictions accordingly \citep{basu2021mirostat}.
-The question this project addresses is whether that decoder --- concretely, an
-effective inverse-temperature $\beta = 1/T$ --- can be \emph{read off the model's
+The question this project addresses is whether that decoder, concretely an
+effective inverse-temperature $\beta = 1/T$, can be \emph{read off the model's
 own logits online, training-free, and with guarantees}, and whether the read-out
 is useful for prediction or generation.
-Inferring decoding settings from text is itself studied --- temperature, top-$k$,
+Inferring decoding settings from text is itself studied: temperature, top-$k$,
 and top-$p$ can be \emph{stolen} from a black-box API by querying it at scale
-\citep{naseh2023stealing} --- but we instead read the model's \emph{own} logits,
-online and with a per-sequence guarantee.
+\citep{naseh2023stealing}; we instead read the model's \emph{own} logits, online
+and with a per-sequence guarantee.
 This sits at the intersection of post-hoc calibration
 \citep{guo2017calibration,liu2024temperature} and the
 algorithms-with-predictions viewpoint \citep{mitzenmacher2020algorithms} of the
@@ -92,7 +92,7 @@ probability on that token across the sequence
 an unbanned control $\blRankOneTvc$, 95\% CI $[\blRankOneTvcLo,\blRankOneTvcHi]$),
 with an early-position contrast $\approx 0$ as a sanity check
 (Figure~\ref{fig:blacklist}).
-\textbf{Top-$k$:} truncating to the top $k$ produces no cliff at $k$ itself ---
+\textbf{Top-$k$:} truncating to the top $k$ produces no cliff at $k$ itself;
 probability instead concentrates on the head, more so the tighter the cutoff.
 So the model tracks its decoder, though the top-$k$ signal is broad sharpening,
 not a $k$-specific edge.
@@ -100,9 +100,9 @@ not a $k$-specific edge.
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.52\linewidth]{fig_blacklist_dropoff.png}
-\caption{Beat 1. With one token banned during generation, the model's predicted
+\caption{With one token banned during generation, the model's predicted
 probability on the banned token falls across the sequence (late minus early,
-$\Delta p = \blRankOneDeltaP$ for the top token) and below an unbanned control ---
+$\Delta p = \blRankOneDeltaP$ for the top token) and below an unbanned control,
 evidence the model has inferred the blacklist from its own text.}
 \label{fig:blacklist}
 \end{figure}
@@ -138,9 +138,9 @@ Because the filter uses only information the model itself has, it is something t
 model could in principle run internally to predict better.
 \emph{Natural} text, by contrast, carries little to recalibrate: fitting the best
 global temperature across $\scSurvNDatasets$ types from in-distribution to far-OOD,
-Qwen is temperature-robust everywhere ---
-$T^\star\in[\scSurvOptTRecaman,\scSurvMaxOptT]$, gain $\le\scSurvGainRecaman$ nats
-on any real type ($\scSurvGainShuffledWikitext$ only on shuffled gibberish).
+Qwen is temperature-robust everywhere, with
+$T^\star\in[\scSurvOptTRecaman,\scSurvMaxOptT]$ and gain $\le\scSurvGainRecaman$
+nats on any real type ($\scSurvGainShuffledWikitext$ only on shuffled gibberish).
 
 \begin{figure}[t]
 \centering
@@ -150,11 +150,11 @@ on any real type ($\scSurvGainShuffledWikitext$ only on shuffled gibberish).
 \begin{minipage}{0.49\linewidth}\centering
   \includegraphics[width=\linewidth]{F_selfcal_nll_gain.png}
 \end{minipage}
-\caption{Beat 2. \emph{Left:} on known-temperature self-text the streaming
-$\hat\beta_t$ recovers the true $\log(1/T)$ from the prefix alone. \emph{Right:}
-using $\hat\beta_t$ as a per-token temperature lowers held-out NLL toward the
-oracle that knows $1/T$. (Large $T\!\ge\!1.5$ gains are on near-random text;
-coherent wins are at $T{=}0.5,0.7$.)}
+\caption{\emph{Left:} on known-temperature self-text the streaming $\hat\beta_t$
+recovers the true $\log(1/T)$ from the prefix alone. \emph{Right:} using
+$\hat\beta_t$ as a per-token temperature lowers held-out NLL toward the oracle
+that knows $1/T$. (Large $T\!\ge\!1.5$ gains are on near-random text; coherent
+wins are at $T{=}0.5,0.7$.)}
 \label{fig:selfcal}
 \end{figure}
 
@@ -162,8 +162,8 @@ coherent wins are at $T{=}0.5,0.7$.)}
 This filter is fast, but its experts are \emph{not} fixed (it re-linearizes the
 likelihood at $\beta{=}1$ each step), so it carries \emph{no} per-sequence
 guarantee: on an adversarial or misspecified stream nothing bounds how wrong
-$\hat\beta_t$ can be. Supplying exactly that guarantee --- and certifying this
-filter's outputs against it --- is the subject of the next section.
+$\hat\beta_t$ can be. Supplying exactly that guarantee, and certifying this
+filter's outputs against it, is the subject of the next section.
 
 % =====================================================================
 \section{A streaming estimator \emph{with guarantees}: the bucket certificate}\label{sec:cert}
@@ -172,7 +172,7 @@ Fix a grid (a set of ``buckets'') of inverse-temperatures
 $\beta_1 < \dots < \beta_G$, log-spaced over a bounded range. Treat each
 $\beta_g$ as a fixed \emph{expert} that forecasts the next token with probability
 $P_g(x_t) = \mathrm{softmax}(\beta_g\,\ell_t)[x_t]$ on the model's \emph{raw}
-logits $\ell_t \in \mathbb{R}^V$ (no rescaling --- fixed experts are what make
+logits $\ell_t \in \mathbb{R}^V$ (no rescaling; fixed experts are what make
 the guarantees hold). Let
 \[
   L_n(\beta) = \sum_{t\le n} \big[\mathrm{lse}(\beta\ell_t) - \beta\,\ell_t[x_t]\big],
@@ -183,7 +183,7 @@ and let the streaming forecaster predict $x_t$ with probability
 $\sum_g w_g(t)\,P_g(x_t)$, where $w_g(t) \propto \pi_0[g]\,e^{-L_{t-1}(\beta_g)}$
 is the Bayes posterior over buckets. This is precisely Vovk's Aggregating
 Algorithm for log loss \citep{vovk1998game,cesabianchi2006prediction}, and the
-following holds for \emph{every} logit/token sequence --- with no assumption that
+following holds for \emph{every} logit/token sequence, with no assumption that
 tokens were sampled from any $P_\beta$, or from anything at all.
 
 \begin{lemma}[per-sequence certificate]\label{lem:certificate}
@@ -219,8 +219,8 @@ assumptions, with uniform $\pi_0$ the mode in (ii) \emph{is} the grid MLE and th
 bar in (iii) is an exact profile-likelihood interval (not a Gaussian
 approximation); the prior survives only as the constant $c=\ln G$. We report the
 mode, not the posterior mean: by (ii) it equals the best-fit bucket with zero
-slack, whereas the mean of the (unimodal but skewed --- $e^{-L_n}$ is log-concave
-by (iii)) posterior over a log-spaced grid is mildly biased.
+slack, whereas the mean of the posterior over a log-spaced grid (unimodal but
+skewed, since $e^{-L_n}$ is log-concave by (iii)) is mildly biased.
 
 \paragraph{Three honest caveats.}
 First, the certificate is relative to the in-hindsight best-fit $\beta$, not the
@@ -243,13 +243,13 @@ $c=\ln G$ on a $121$-bucket grid spanning $\log\beta\in[-3,3]$.
 Table~\ref{tab:grid_certificate} reports the outcome. The bar covered the
 continuum MLE on every well-specified synthetic stream (\gridCertCoverage); on
 real Qwen-2.5-3B streams at $\beta{=}1$ the median width was
-\gridCertMedianWidthBtOne{} in $\log\beta$ (the grid-resolution floor --- the bar
+\gridCertMedianWidthBtOne{} in $\log\beta$ (the grid-resolution floor; the bar
 is far from vacuous where logits carry temperature information) and widened on
-peaked-logit streams exactly as (iii) predicts. The transfer check to the Beat-2
-filter passed (\gridCertFaithfulAgree{} of estimates inside the bar), while the
-original $\beta{=}1$-linearized filter landed inside on only
-\gridCertOriginalAgree{} --- so the certificate extends to the corrected filter's
-outputs, not the original's.
+peaked-logit streams exactly as (iii) predicts. The transfer check to the
+streaming filter of Section~\ref{sec:filter} passed (\gridCertFaithfulAgree{} of
+estimates inside the bar), while the original $\beta{=}1$-linearized filter landed
+inside on only \gridCertOriginalAgree{}, so the certificate extends to the
+corrected filter's outputs, not the original's.
 
 \begin{table}[t]
 \centering
@@ -292,12 +292,12 @@ overshoots in the ``confusion'' regime ($\beta^{\mathrm{target}}<1$), where
 low-$\beta$ self-generation degrades into incoherent text within $\sim$20 tokens
 (a garbage-in/garbage-out confound that limits what the confusion-regime numbers
 can claim). Two further controls in the longer draft
-(\texttt{paper/decoding\_paper.tex}) --- a sampler-switch experiment (the belief
-is not a fast per-token entropy read-out, a null on one mechanism) and a
-closed-loop-vs-invariance comparison --- support only ``do not correct at
-$\beta^{\mathrm{target}}=1$, because Qwen is already calibrated there.'' The
-natural-text survey behind Beat~2's wild-text claim (all $\scSurvNDatasets$ types)
-is tabulated there as well.
+(\texttt{paper/decoding\_paper.tex}) support only ``do not correct at
+$\beta^{\mathrm{target}}=1$, because Qwen is already calibrated there'': a
+sampler-switch experiment (the belief is not a fast per-token entropy read-out, a
+null on one mechanism) and a closed-loop-vs-invariance comparison. The
+natural-text survey behind the wild-text claim of Section~\ref{sec:filter} (all
+$\scSurvNDatasets$ types) is tabulated there as well.
 
 \bibliographystyle{plainnat}
 \bibliography{refs}
