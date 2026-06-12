@@ -56,8 +56,7 @@ log loss \citep{vovk1998game}. They hold on arbitrary streams: a forecast-regret
 bound of $\ln G$ against the best bucket, and a convex level-set error bar around
 the grid MLE (Lemma~\ref{lem:certificate}); the same construction certifies the
 streaming read-out of~(2). Turning the read-out into better \emph{generation}
-self-neutralizes and is left open. All numbers are script-generated and cited by
-name.
+self-neutralizes and is left open.
 \end{abstract}
 
 % =====================================================================
@@ -225,7 +224,7 @@ certifies \emph{fit to the observed stream}, and a narrow bar means $\beta$ is
 degrade in opposite directions. Third, the guarantee attaches to the mixture, not
 a point estimator (proper online predictors face an exp-concavity obstruction
 that improper mixtures avoid \citep{foster2018logistic}), so transferring it to
-the fast filter (Section~\ref{sec:filter}) is an empirical, pre-registered claim.}
+the fast filter (Section~\ref{sec:filter}) is an empirical claim.}
 
 % =====================================================================
 \section{Generating better, and limitations}\label{sec:gen}
@@ -237,11 +236,13 @@ a \emph{sequence-level} target rather than a per-token one. This ran into the
 per-token temperature cannot reproduce a globally normalized sequence-level
 distribution, and our attempts to address or circumvent it did not pan out. Even
 the modest closed-loop version, feeding $\hat\beta_t$ back into the sampler as it
-generates, self-neutralizes: correcting toward $\hat\beta$ drives the effective
-decoding temperature back to $\beta_{\mathrm{dec}}\to 1$, cancelling the very
-signal it reads off. We confirmed this across exact-grid filters, so it is not an
-approximation artifact (Appendix~\ref{app:controls}). Turning the read-out into
-better generation is the honest open problem.
+generates, did not help: the corrected stream comes out at effectively
+temperature~$1$, so the correction neutralizes itself (confirmed across
+exact-grid filters, so it is not an approximation artifact;
+Appendix~\ref{app:controls}). We did not pin down why; one factor we believe
+contributes is that the model is not an optimal predictor of its own
+temperature. Turning the read-out into better generation is the honest open
+problem.
 
 \paragraph{Limitations.}
 These are preliminary steps, on a single model and tokenizer; the certificate
@@ -257,18 +258,15 @@ the stream and the best-fit bucket is a projection (synthetic pilot:
 \section{Corrector and supporting control experiments}\label{app:controls}
 % =====================================================================
 A corrector $\beta^{\mathrm{dec}}_t = \beta^{\mathrm{target}}/\hat\beta_t^{\,p}$
-divides a user's target by the estimate. An empirical sweep shows it pins the
-effective temperature in the ``boredom'' regime ($\beta^{\mathrm{target}}>1$) but
-overshoots in the ``confusion'' regime ($\beta^{\mathrm{target}}<1$), where
-low-$\beta$ self-generation degrades into incoherent text within $\sim$20 tokens
-(a garbage-in/garbage-out confound that limits what the confusion-regime numbers
-can claim). Two further controls in the longer draft
-(\texttt{paper/decoding\_paper.tex}) support only ``do not correct at
-$\beta^{\mathrm{target}}=1$, because Qwen is already calibrated there'': a
-sampler-switch experiment (the belief is not a fast per-token entropy read-out, a
-null on one mechanism) and a closed-loop-vs-invariance comparison. The
-natural-text survey behind the wild-text claim of Section~\ref{sec:filter} (all
-$\scSurvNDatasets$ types) is tabulated there as well.
+divides a user's target by the estimate. In an empirical sweep it did not
+deliver better generation: the closed loop neutralizes itself and the output
+lands at effectively temperature~$1$. We did not establish the mechanism. Two
+controls in the longer draft (\texttt{paper/decoding\_paper.tex}) each rule out
+one candidate: a sampler-switch experiment shows the belief is not a fast
+per-token entropy read-out, and a closed-loop-vs-invariance comparison
+constrains it further. The natural-text survey behind the wild-text claim of
+Section~\ref{sec:filter} (all $\scSurvNDatasets$ types) is tabulated there as
+well.
 
 \bibliographystyle{plainnat}
 \bibliography{refs}
