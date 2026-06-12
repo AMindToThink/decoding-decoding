@@ -61,3 +61,13 @@ claim = "Fixed-Share: sharing a fraction of posterior weight to the prior each s
 key   = "foster2018logistic"
 arxiv = "1803.09349"
 claim = "Proper online logistic-type predictors face an exp-concavity obstruction (regret exponential in the predictor norm) while improper mixture forecasters avoid it; the reason the certificate attaches to the grid mixture, not the Laplace point filter."
+
+[[cite]]
+key   = "naseh2023stealing"
+arxiv = "2303.04729"
+claim = "Stealing the Decoding Algorithms of Language Models (CCS'23): recovers temperature, top-k, and top-p from a black-box API via large query budgets on output statistics; prior art for the decoding-hyperparameter-inference goal, distinguished here by being black-box, offline, and aimed at a third-party API rather than the model's own logits."
+
+[[cite]]
+key   = "mikhaylovskiy2026temperature"
+arxiv = "2601.02320"
+claim = "Independently derives the same training-free per-sequence temperature MLE (observed logit sum = expected logit sum under softmax(beta*logits)), but offline (batch root-finder) and with no certificate; near-concurrent work (Jan 2026) whose 'ill-posed, awaiting regularization' gap the grid certificate addresses."

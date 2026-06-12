@@ -72,6 +72,10 @@ The question this project addresses is whether that decoder --- concretely, an
 effective inverse-temperature $\beta = 1/T$ --- can be \emph{read off the model's
 own logits online, training-free, and with guarantees}, and whether the read-out
 is useful for prediction or generation.
+Inferring decoding settings from text is itself studied --- temperature, top-$k$,
+and top-$p$ can be \emph{stolen} from a black-box API by querying it at scale
+\citep{naseh2023stealing} --- but we instead read the model's \emph{own} logits,
+online and with a per-sequence guarantee.
 This sits at the intersection of post-hoc calibration
 \citep{guo2017calibration,liu2024temperature} and the
 algorithms-with-predictions viewpoint \citep{mitzenmacher2020algorithms} of the
@@ -118,6 +122,10 @@ $J_t=\sigma_0^{-2}+\sum_{\tau\le t}\mathrm{Var}_q[\ell_\tau]$ evaluated at
 $\beta{=}1$. Implementation and unit tests (shift invariance,
 batched\,$=$\,serial, recovery under matched-prior synthetic data):
 \texttt{src/decoding\_decoding/counter\_decode.py}.}
+The per-sequence temperature MLE this filter targets was derived independently,
+offline, in near-concurrent work \citep{mikhaylovskiy2026temperature}; our
+contribution is its \emph{online} treatment and the per-sequence certificate of
+Section~\ref{sec:cert}.
 \textbf{Recovery:} on Qwen self-text generated at a \emph{known} temperature
 ($\scNseq$ sequences per $T$), $\hat\beta_t$ settles on the true $\log(1/T)$ from
 the prefix alone (bias $\scFaithBiasZeroSeven$ at $T{=}0.7$;
