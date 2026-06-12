@@ -67,7 +67,9 @@ At each step an autoregressive language model emits a distribution over next
 tokens; \emph{decoding} chooses how to sample from it.
 Because models are trained to predict text rather than to generate it, a model
 that reads back its own generated prefix has an incentive to infer the decoder
-that produced it and adjust its predictions accordingly \citep{basu2021mirostat}.
+that produced it and adjust its predictions accordingly. One facet has been studied from
+the generation side: Mirostat \citep{basu2021mirostat} runs a feedback loop
+on the entropy of the output to hold its perplexity at a target.
 The question this project addresses is whether that decoder, concretely an
 effective inverse-temperature $\beta = 1/T$, can be \emph{read off the model's
 own logits online, training-free, and with guarantees}, and whether the read-out
