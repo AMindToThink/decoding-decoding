@@ -1,6 +1,8 @@
 \documentclass[11pt]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb}
+\usepackage{amsthm}
+\newtheorem{lemma}{Lemma}
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{parskip}
@@ -34,6 +36,7 @@
 % Single source for all inline numbers: build_paper_macros.py emits this file,
 % ingesting the Exp A and natural-text report macros (digit-in-name sanitised).
 \input{../results/tables/paper_macros.tex}
+\input{../data/grid_certificate/macros.tex}
 
 \title{Modeling and Calibrating: LLMs Figure out their Decoding Process}
 \author{Matthew Khoriaty}
@@ -257,6 +260,94 @@ Everything below uses Qwen-2.5-3B (base, fp16). The filter implementation and
 its unit tests (shift-invariance, batched\,=\,serial equivalence, recovery of
 $\beta_{\mathrm{true}}$ under matched-prior synthetic data) live in
 \texttt{src/decoding\_decoding/counter\_decode.py}.
+
+\subsection{A distribution-free certificate for the grid variant}
+\label{sec:certificate}
+The Laplace filter is a point estimator; a companion \emph{grid mixture}
+variant carries worst-case guarantees. Fix a grid $\beta_1 < \dots < \beta_G$
+and treat each $\beta_g$ as an expert forecasting
+$P_g(x_t) = \mathrm{softmax}(\beta_g\,\ell_t)[x_t]$ on the \emph{raw} logits
+(no imprint rescaling --- fixed experts are what make the guarantees hold).
+Let $L_n(\beta) = \sum_{t\le n} \big[\mathrm{lse}(\beta\ell_t) -
+\beta\,\ell_t[x_t]\big]$ with $\mathrm{lse} = \log\sum_v \exp(\cdot)$, let
+$\pi_0$ be a prior on the grid, and let the mixture forecast token $x_t$ with
+probability $\sum_g w_g(t)\,P_g(x_t)$, where $w_g(t) \propto
+\pi_0[g]\,e^{-L_{t-1}(\beta_g)}$ is the Bayes posterior. This is Vovk's
+Aggregating Algorithm for log loss \citep{vovk1998game,
+cesabianchi2006prediction}, and the following holds for \emph{every} token
+sequence --- no assumption that tokens were sampled from any $P_\beta$, or
+from anything at all.
+
+\begin{lemma}[per-sequence certificate]\label{lem:certificate}
+For any logit sequence $\ell_{1:n}$ and any token sequence $x_{1:n}$:
+(i)~the mixture's cumulative log loss is
+$-\ln \sum_g \pi_0[g]\, e^{-L_n(\beta_g)} \le L_n(\beta_g) +
+\ln(1/\pi_0[g])$ for every $g$; with uniform $\pi_0$ the regret against the
+best grid temperature in hindsight is at most $\ln G$.
+(ii)~With uniform $\pi_0$ the posterior mode equals
+$\arg\min_g L_n(\beta_g)$, the best-fit (\emph{effective}) inverse
+temperature on the grid, exactly.
+(iii)~$L_n$ is convex with $L_n''(\beta) = \sum_t
+\mathrm{Var}_{q_{\beta,t}}[\ell_t]$ where $q_{\beta,t} =
+\mathrm{softmax}(\beta\ell_t)$, so for any $c > 0$ the sub-level set
+$\{\beta : L_n(\beta) \le \min L_n + c\}$ is an interval containing the
+sequence MLE; its endpoints, read off the stored grid loss profile, are a
+data-dependent error bar that needs no distributional assumptions.
+\end{lemma}
+
+\begin{proof}
+(i)~The mixture's per-step log probabilities telescope:
+$\sum_t \ln \sum_g w_g(t) P_g(x_t) = \ln \sum_g \pi_0[g]\,
+e^{-L_n(\beta_g)} \ge \ln\big(\pi_0[g]\, e^{-L_n(\beta_g)}\big)$ for each
+$g$. (ii)~Immediate from $w_g(n) \propto e^{-L_n(\beta_g)}$.
+(iii)~Each summand of $L_n$ is a $\mathrm{lse}$ of an affine function of
+$\beta$ minus an affine function, hence convex; differentiate twice.
+\end{proof}
+
+Three honest caveats. First, the certificate is relative to the in-hindsight
+best-fit $\beta$, \emph{not} the dial a counterparty actually set; under
+misspecified decoders (\S\ref{sec:positive}'s blacklist and top-$k$, the
+closed loop of \S\ref{sec:corrector}) no single ``true'' $\beta$ describes
+the stream, and the best-fit value is precisely what ``effective
+temperature'' should mean there. Second, the interval in (iii) widens
+exactly when peaked logits make $\beta$ unidentifiable
+($\mathrm{Var}_{q}[\ell_t] \to 0$); forecasting regret and estimation
+precision degrade in opposite directions. Third, the guarantee attaches to
+the mixture, not to the Laplace point filter: proper online predictors for
+logistic-type losses face an exp-concavity obstruction that improper mixture
+forecasts avoid \citep{foster2018logistic}, so transfer of the certificate
+to the Laplace estimates is an empirical claim (tested, with thresholds
+pre-registered, in \texttt{paper/grid\_certificate\_prereg.md}). A
+fixed-share variant \citep{herbster1998tracking} tracks a drifting $\beta$
+with regret $\approx m\ln(Gn/m)$ against any $m$-segment comparator, but
+the estimation reading (ii)--(iii) is for the static case only.
+
+\begin{table}[t]
+\centering
+\input{\tabdir/tab_grid_certificate.tex}
+\caption{Pre-registered evaluation of the certificate
+(\texttt{paper/grid\_certificate\_prereg.md}; hypotheses, sample sizes, and
+thresholds committed before any data were generated). Bars use the default
+threshold $c=\ln G$ on a $121$-point grid spanning $\log\beta \in [-3,3]$;
+real streams are Qwen-2.5-3B, $32$ prompts, $1000$ tokens.}
+\label{tab:grid_certificate}
+\end{table}
+
+Table~\ref{tab:grid_certificate} reports the pre-registered evaluation. The
+bar always covered the continuum MLE on well-specified synthetic streams
+(\gridCertCoverage); on real $\beta^{\mathrm{target}}{=}1$ streams the
+median bar width was \gridCertMedianWidthBtOne{} in $\log\beta$ --- the grid
+resolution floor, i.e.\ the certificate is far from vacuous where logits
+carry temperature information --- and it widened on peaked-logit streams
+exactly as the identifiability argument predicts. The transfer check passed:
+\gridCertFaithfulAgree{} re-linearized (faithful) Laplace estimates fell
+inside the certified interval. An exploratory companion number is more
+pointed: the original $\beta{=}1$-linearized filter of \S\ref{sec:method}
+landed inside the bar on only \gridCertOriginalAgree{} of the same streams,
+an independent, assumption-free confirmation that its estimates are biased
+away from the sequence MLE once $\beta$ leaves the neighborhood of $1$ ---
+so the certificate extends to the faithful variant's outputs, not to the
+original filter's.
 
 % =====================================================================
 \section{The model infers its decoder: positive evidence}\label{sec:positive}

@@ -1,0 +1,52 @@
+{
+  "threshold_c": 4.795790545596741,
+  "H1": {
+    "covered": 200,
+    "n": 200,
+    "p_value": 1.0,
+    "fails": false,
+    "jeffreys_P_coverage_ge_0.95": 0.9999941696125544
+  },
+  "H2": {
+    "n_streams": 32,
+    "n_below_threshold": 32,
+    "median_width": 0.049999985843896866,
+    "median_ci95": [
+      0.049999967217445374,
+      0.049999985843896866
+    ],
+    "p_value": 2.3283064365386963e-10,
+    "holds": true
+  },
+  "H3": {
+    "median_natural": 0.24999999999999978,
+    "median_peaked": 0.4499999999999996,
+    "p_value": 6.390274211119692e-68,
+    "holds": true,
+    "rank_biserial": 1.0
+  },
+  "H4": {
+    "agree": 88,
+    "n": 96,
+    "p_value": 0.7554039673230711,
+    "fails": false
+  },
+  "exploratory": {
+    "original_laplace_agreement": "10/96",
+    "median_width_by_beta_target_n1000": {
+      "0.5": 0.14999991655349731,
+      "1.0": 0.049999985843896866,
+      "2.0": 0.30000001192092896
+    },
+    "median_realized_regret_by_beta_target (bound ln G = 4.796)": {
+      "0.5": 4.31689453125,
+      "1.0": 4.73736572265625,
+      "2.0": 3.688385009765625
+    },
+    "median_width_by_n_bt1": {
+      "200": 0.1749999225139618,
+      "500": 0.09999994933605194,
+      "1000": 0.049999985843896866
+    }
+  }
+}

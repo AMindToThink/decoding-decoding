@@ -303,8 +303,8 @@ def analyze() -> None:
     results["H1"] = {
         "covered": s,
         "n": n,
-        "p_value": h1_test.pvalue,
-        "fails": h1_test.pvalue < 0.05,
+        "p_value": float(h1_test.pvalue),
+        "fails": bool(h1_test.pvalue < 0.05),
         "jeffreys_P_coverage_ge_0.95": jeffreys_prob_at_least(s, n, H1_NOMINAL_COVERAGE),
     }
 
@@ -326,8 +326,8 @@ def analyze() -> None:
             float(boot.confidence_interval.low),
             float(boot.confidence_interval.high),
         ],
-        "p_value": h2_test.pvalue,
-        "holds": h2_test.pvalue < 0.05,
+        "p_value": float(h2_test.pvalue),
+        "holds": bool(h2_test.pvalue < 0.05),
     }
 
     # H3 — peaked wider than natural (Mann–Whitney U, one-sided).
@@ -337,7 +337,7 @@ def analyze() -> None:
         "median_natural": float(np.median(w_nat)),
         "median_peaked": float(np.median(w_peak)),
         "p_value": float(h3_p),
-        "holds": h3_p < 0.05,
+        "holds": bool(h3_p < 0.05),
         "rank_biserial": float(2.0 * u_stat / (w_nat.size * w_peak.size) - 1.0),
     }
 
@@ -359,8 +359,8 @@ def analyze() -> None:
     results["H4"] = {
         "agree": s4,
         "n": n4,
-        "p_value": h4_test.pvalue,
-        "fails": h4_test.pvalue < 0.05,
+        "p_value": float(h4_test.pvalue),
+        "fails": bool(h4_test.pvalue < 0.05),
     }
 
     # Exploratory (no thresholds; labeled).
