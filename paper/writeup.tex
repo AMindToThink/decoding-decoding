@@ -110,7 +110,8 @@ evidence the model has inferred the blacklist from its own text.}
 % =====================================================================
 \section{A streaming estimator for the effective temperature}\label{sec:filter}
 % =====================================================================
-If the model tracks its decoder, can we make that quantitative and \emph{useful}?
+Can we calculate what the model \emph{should} believe its decoding temperature to
+be, and use that estimate to calibrate its predictions?
 A streaming \emph{filter} reads an inverse-temperature $\hat\beta_t = 1/\hat T_t$
 off the prefix one token at a time, training-free, using only the model's own
 logits.%
