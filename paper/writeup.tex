@@ -226,8 +226,20 @@ a point estimator (proper online predictors face an exp-concavity obstruction
 that improper mixtures avoid \citep{foster2018logistic}), so transferring it to
 the fast filter (Section~\ref{sec:filter}) is an empirical claim.}
 
+\appendix
 % =====================================================================
-\section{Generating better, and limitations}\label{sec:gen}
+\section{Limitations}\label{sec:limits}
+% =====================================================================
+These are preliminary steps, on a single model and tokenizer; the certificate
+certifies the effective $\beta$ of the \emph{observed} stream, never a
+counterparty's dial. The natural next step, for which it is the right tool, is
+misspecification: the \emph{effective} temperature and goodness-of-fit that
+top-$k$ and blacklist decoders register, where no single temperature reproduces
+the stream and the best-fit bucket is a projection (synthetic pilot:
+\texttt{scripts/e1\_synthetic\_pilot.py}).
+
+% =====================================================================
+\section{Generating better}\label{sec:gen}
 % =====================================================================
 \paragraph{Can we use the read-out to \emph{generate} better? Not yet.}
 The original aim was more ambitious: match the sampler's per-token temperature to
@@ -244,16 +256,6 @@ contributes is that the model is not an optimal predictor of its own
 temperature. Turning the read-out into better generation is the honest open
 problem.
 
-\paragraph{Limitations.}
-These are preliminary steps, on a single model and tokenizer; the certificate
-certifies the effective $\beta$ of the \emph{observed} stream, never a
-counterparty's dial. The natural next step, for which it is the right tool, is
-misspecification: the \emph{effective} temperature and goodness-of-fit that
-top-$k$ and blacklist decoders register, where no single temperature reproduces
-the stream and the best-fit bucket is a projection (synthetic pilot:
-\texttt{scripts/e1\_synthetic\_pilot.py}).
-
-\appendix
 % =====================================================================
 \section{Corrector and supporting control experiments}\label{app:controls}
 % =====================================================================
