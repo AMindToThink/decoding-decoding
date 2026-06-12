@@ -447,7 +447,15 @@ def discrete_grid_update_batched(
     memory_decay: float = 1.0,
     prior_pmf: torch.Tensor | None = None,
 ) -> DiscreteGridState:
-    """Bayes update on the discrete grid for a batch of trajectories.
+    """LEGACY bootstrap-grid filter — kept as a baseline, NOT the certificate.
+
+    Carries **no per-sequence guarantee** (its experts are not fixed — see the
+    NOTE below) and reports the posterior **mean** β̂ = Σ_g π[g]·β_g, i.e. the
+    "posterior-mean trap" flagged in ``paper/grid_certificate_walkthrough.html``:
+    the mean of a skewed posterior over a log-spaced grid is a biased point
+    estimate, not the grid MLE. For the guarantee-bearing filter that scores
+    fixed experts on raw logits and reports the grid MAP, use
+    ``grid_mixture_update_batched`` (the certificate).
 
     Likelihood at grid point β_g for trajectory n (using bootstrap reference
     ℓ*_t = ℓ_t / β̂_t per-trajectory):

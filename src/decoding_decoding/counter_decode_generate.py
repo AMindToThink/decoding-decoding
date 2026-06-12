@@ -35,6 +35,18 @@ Per-trajectory npz schema (traces/):
     eta_hat_post_final     scalar     float32 — final η̂ AFTER the last update
     J_post_final           scalar     float32 — final J AFTER the last update
 
+NOTE (prior_kind="grid_mixture", the certificate backend): the Laplace/discrete
+filters report a precision J, but the grid mixture has no precision analog. For
+grid_mixture traces the diagnostic slots are REINTERPRETED:
+    beta_hat_pre / eta_hat_post_final → grid MAP (= grid MLE), NOT a posterior mean
+                                        (beta_hat_pre[:,0] is the prior sentinel β=1,
+                                        not the MAP — no tokens absorbed yet).
+    J_pre / J_post_final              → level-set WIDTH in log β (the honest,
+                                        data-dependent uncertainty), NOT a precision.
+    score                             → step change in log(grid MAP).
+    fisher                            → realized mixture regret (mix_loss − best
+                                        expert loss), bounded by ln G (Lemma (i)).
+
 Per-trajectory sparse_logits npz (only for arm="uncorrected"):
     positions  (P,)    int32   — the step indices at which we saved
     logits     (P, V)  float16 — pre-decoding logits at those steps
@@ -57,13 +69,18 @@ import torch.nn.functional as F
 
 from decoding_decoding.counter_decode import (
     DiscreteGridState,
+    GridMixtureState,
     LaplaceState,
     discrete_grid_update_batched,
     estimate_beta_rank_gap,
     estimate_beta_renyi_infty,
+    grid_mixture_level_set,
+    grid_mixture_update_batched,
     init_discrete_grid_state,
+    init_grid_mixture,
     init_laplace,
     laplace_update,
+    make_beta_grid,
     rank_gaps,
     renyi_infty_from_logits,
     sample_under_beta,
@@ -203,6 +220,59 @@ def _topn_extract(logits: torch.Tensor, n: int) -> tuple[np.ndarray, np.ndarray]
     return top_idx.cpu().numpy().astype(np.int32), top_lp.cpu().numpy().astype(np.float32)
 
 
+def _init_grid_mixture_state(
+    *,
+    batch_size: int,
+    prior_kwargs: dict | None,
+    evidence_weight: float,
+    memory_decay: float,
+    device: torch.device | str | None,
+    dtype: torch.dtype = torch.float32,
+) -> tuple[GridMixtureState, float]:
+    """Build the certificate (grid-mixture) filter for the generation loop.
+
+    The grid mixture is Vovk's Aggregating Algorithm at η=1 over a FIXED β grid
+    with a uniform prior (see ``grid_mixture_update_batched``). Its per-sequence
+    guarantees hold only because the experts are fixed and the update is pure
+    log-loss Bayes, so the bootstrap knobs are rejected here: ``evidence_weight``
+    ≠ 1 and ``memory_decay`` ≠ 1 both void the 1-mixability of log loss. The only
+    dynamics knob is ``switch_rate`` (Fixed-Share); ``sigma_0`` does not apply
+    (uniform prior).
+
+    Recognized ``prior_kwargs`` (all optional): ``switch_rate`` (default 0.0),
+    ``n_points`` (161), ``log_lo`` (-4.0), ``log_hi`` (4.0). Unknown keys raise.
+
+    Returns:
+        (state, switch_rate).
+    """
+    if evidence_weight != 1.0:
+        raise ValueError(
+            "prior_kind='grid_mixture' is the guarantee-bearing certificate and "
+            f"requires evidence_weight == 1.0 (got {evidence_weight!r}); any weight "
+            "!= 1 destroys the 1-mixability of log loss and voids the guarantee."
+        )
+    if memory_decay != 1.0:
+        raise ValueError(
+            "prior_kind='grid_mixture' has no memory_decay "
+            f"(got {memory_decay!r}); use switch_rate (Fixed-Share) for drift."
+        )
+    pkw = dict(prior_kwargs or {})
+    switch_rate = float(pkw.pop("switch_rate", 0.0))
+    n_points = int(pkw.pop("n_points", 161))
+    log_lo = float(pkw.pop("log_lo", -4.0))
+    log_hi = float(pkw.pop("log_hi", 4.0))
+    if pkw:
+        raise ValueError(
+            f"prior_kind='grid_mixture' got unknown prior_kwargs {sorted(pkw)}; "
+            "recognized: switch_rate, n_points, log_lo, log_hi."
+        )
+    beta_grid = make_beta_grid(
+        log_lo=log_lo, log_hi=log_hi, n_points=n_points, device=device, dtype=dtype
+    )
+    state = init_grid_mixture(batch_size=batch_size, beta_grid=beta_grid)
+    return state, switch_rate
+
+
 @dataclass
 class GenerationResult:
     """Per-trajectory data for a batch of `B` trajectories run in parallel."""
@@ -286,6 +356,8 @@ def _generate_batch(
     # (the design choice is per-condition, not per-trajectory).
     laplace_state: LaplaceState | None = None
     grid_state: DiscreteGridState | None = None
+    grid_mixture_state: GridMixtureState | None = None
+    grid_mixture_switch_rate: float = 0.0
     laplace_prior_eta: float = 0.0
     laplace_prior_J: float = 0.0
     grid_prior_pmf: torch.Tensor | None = None
@@ -310,6 +382,20 @@ def _generate_batch(
         sigma_0_val = float(sigma_0_per_traj[0].item())
         laplace_prior_eta = -0.5 * sigma_0_val ** 2
         laplace_prior_J = 1.0 / sigma_0_val ** 2
+    elif prior_kind == "grid_mixture":
+        # Certificate backend: Vovk Aggregating Algorithm over a fixed β grid
+        # (guarantee-bearing; see grid_mixture_update_batched). Uniform prior, so
+        # sigma_0 is ignored. Bypasses the bootstrap plumbing entirely — the only
+        # dynamics knob is switch_rate; evidence_weight/memory_decay are rejected
+        # inside the helper because they void the per-sequence regret guarantee.
+        grid_mixture_state, grid_mixture_switch_rate = _init_grid_mixture_state(
+            batch_size=B,
+            prior_kwargs=prior_kwargs,
+            evidence_weight=evidence_weight,
+            memory_decay=memory_decay,
+            device=device,
+            dtype=torch.float32,
+        )
     else:
         sigma_0_val = float(sigma_0_per_traj[0].item())
         if not (sigma_0_per_traj == sigma_0_per_traj[0]).all():
@@ -406,6 +492,21 @@ def _generate_batch(
             # No "J" in the discrete filter; record posterior precision on log β as 1/std².
             std_lb = grid_state.posterior_std_log_beta()
             J_now = 1.0 / std_lb.clamp_min(1e-3) ** 2
+        elif grid_mixture_state is not None:
+            # Certificate readout: β̂ is the grid MAP (= grid MLE under the uniform
+            # prior). There is NO precision analog J; the honest uncertainty is the
+            # level-set WIDTH in log β, recorded in the J_pre slot (a width, not a
+            # precision — see the grid_mixture note in the module docstring).
+            ls_lo, ls_hi = grid_mixture_level_set(grid_mixture_state)
+            J_now = (ls_hi - ls_lo).to(torch.float32)
+            if t == 0:
+                # No tokens absorbed yet: the uniform-prior MAP is degenerate (all
+                # experts tie, argmax picks the smallest β). Report the grid centre
+                # β=1 as the prior point estimate so the first corrected step uses
+                # β_dec = β_target (no spurious correction).
+                beta_hat_now = torch.ones(B, device=device, dtype=torch.float32)
+            else:
+                beta_hat_now = grid_mixture_state.beta_map().to(torch.float32)
         elif prior_kind == "rank_gap":
             assert rank_gap_reference is not None
             beta_hat_now = estimate_beta_rank_gap(logits_t, rank_gap_reference)
@@ -472,6 +573,19 @@ def _generate_batch(
             score_t = torch.log(new_bh) - torch.log(beta_hat_now)
             new_J = 1.0 / grid_state.posterior_std_log_beta().clamp_min(1e-3) ** 2
             fisher_t = (new_J - J_now).clamp_min(0.0)
+        elif grid_mixture_state is not None:
+            grid_mixture_state = grid_mixture_update_batched(
+                grid_mixture_state,
+                logits_t,
+                x_t,
+                switch_rate=grid_mixture_switch_rate,
+            )
+            # Diagnostics: score = change in log β̂ (grid MAP); the fisher slot is
+            # repurposed for the realized mixture regret (mix_loss − best-expert
+            # loss), the machinery quantity Lemma (i) bounds by ln G.
+            new_map = grid_mixture_state.beta_map().to(torch.float32)
+            score_t = torch.log(new_map) - torch.log(beta_hat_now)
+            fisher_t = grid_mixture_state.realized_regret().to(torch.float32)
         else:
             # Shape estimators: no filter update. β̂_{t+1} will be computed from
             # the next step's ℓ_{t+1} and the same fixed reference.
@@ -543,6 +657,19 @@ def _generate_batch(
             .numpy()
             .astype(np.float32)
         )
+    elif grid_mixture_state is not None:
+        # Certificate final readout: η̂_final = log(grid MAP); the J_final slot
+        # holds the final level-set WIDTH in log β (a width, not a precision —
+        # there is no precision analog for the mixture).
+        eta_final = (
+            torch.log(grid_mixture_state.beta_map())
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.float32)
+        )
+        ls_lo, ls_hi = grid_mixture_level_set(grid_mixture_state)
+        J_final = (ls_hi - ls_lo).detach().cpu().numpy().astype(np.float32)
     else:
         # Shape estimator: no posterior. Take the last-step β̂ as the "final"
         # estimate, and zero out the precision (J undefined for shape readout).
